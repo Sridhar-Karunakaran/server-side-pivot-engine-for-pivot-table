@@ -11,10 +11,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="7.0.0" />
+    <None Update="DataSource\**\*"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
-    <PackageReference Include="Syncfusion.Pivot.Engine" Version="32.1.19" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
+    <PackageReference Include="Syncfusion.Pivot.Engine" Version="34.2.6" />
   </ItemGroup>
 
 </Project>
