@@ -111,13 +111,11 @@ public sealed class PivotController : Controller
 
     private async Task<object> GetData(string indexName)
     {
-        object? data = await cache.GetOrCreateAsync(indexes.DataKey(indexName), async cacheEntry =>
-        {
-            cacheEntry.SetSize(1);
-            cacheEntry.AbsoluteExpiration = DateTimeOffset.UtcNow.AddMinutes(60);
-            return await indexes.GetDataAsync(indexName, HttpContext.RequestAborted).ConfigureAwait(false);
-        }).ConfigureAwait(false);
-        return data ?? throw new InvalidOperationException("The pivot data source could not be loaded.");
+        // The IndexManager already caches index data under DataKey(indexName) and
+        // invalidates it on edit/reload/disable. Reading directly (no extra caching
+        // layer here) guarantees the engine always sees freshly reloaded data.
+        IReadOnlyList<System.Dynamic.ExpandoObject> data = await indexes.GetDataAsync(indexName, HttpContext.RequestAborted).ConfigureAwait(false);
+        return data;
     }
 
     private async Task<object> GetMembers(string indexName, FetchData parameter)

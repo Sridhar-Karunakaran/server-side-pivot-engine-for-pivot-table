@@ -1,25 +1,23 @@
+// Custom Data Server (Phase 1) client configuration.
+// The server endpoint and the index name are set here; the index name is sent
+// on every request so the server routes to the registered index (spec §3.2/§10).
+var PIVOT_INDEX = 'Sample-Csv';
 var pivotGridObj = new ej.pivotview.PivotView({
     dataSourceSettings: {
-        url: 'https://localhost:44350/api/pivot/post',
+        url: 'http://localhost:5285/api/pivot/post',
+        index: PIVOT_INDEX,
         mode: 'Server',
         type: 'JSON',
         expandAll: false,
         rows: [{
-            name: 'ProductID', caption: 'Product ID'
+            name: 'Country', caption: 'Country'
         }],
         enableSorting: true,
-        formatSettings: [{
-            name: 'Price',
-            format: 'C'
-        }],
         columns: [{
-            name: 'Year', caption: 'Production Year'
+            name: 'Year', caption: 'Year'
         }],
         values: [{
-            name: 'Sold', caption: 'Units Sold'
-        },
-        {
-            name: 'Price', caption: 'Sold Amount'
+            name: 'Amount', caption: 'Amount'
         },],
         allowMemberFilter: true
     },
