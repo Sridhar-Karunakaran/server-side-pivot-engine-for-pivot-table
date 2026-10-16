@@ -187,6 +187,8 @@ public sealed class CsvDataProvider : IDataSourceProvider
         parser.TrimWhiteSpace = false;
 
         string[] headers = parser.ReadFields() ?? throw new InvalidDataException("CSV data must contain a header row.");
+        // Trim header names so fields like "Country " resolve as "Country".
+        headers = headers.Select(h => h.Trim()).ToArray();
         ValidateHeaders(headers);
         List<string?[]> rawRows = [];
         while (!parser.EndOfData)

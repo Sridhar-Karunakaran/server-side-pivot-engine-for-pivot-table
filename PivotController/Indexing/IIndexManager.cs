@@ -45,4 +45,5 @@ public interface IIndexManager
     Task<IReadOnlyList<System.Dynamic.ExpandoObject>> GetDataAsync(string indexName, CancellationToken cancellationToken = default);
     string DataKey(string indexName);
     string EngineKeyPrefix(string indexName);
+    int EngineVersion(string indexName);
 }

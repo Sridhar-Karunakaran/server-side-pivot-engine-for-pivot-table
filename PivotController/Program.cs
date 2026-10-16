@@ -105,6 +105,8 @@ if (runtimeDocument.Indexes.Count > 0)
 
 builder.Services.AddSingleton<IIndexManager>(indexManager);
 builder.Services.AddSingleton<DataServerConfiguration>(dataServerConfig);
+// Spec §12.4 — periodic auto-reload of indexes (refresh time measured from server start).
+builder.Services.AddHostedService<IndexReloadWorker>();
 
 var app = builder.Build();
 

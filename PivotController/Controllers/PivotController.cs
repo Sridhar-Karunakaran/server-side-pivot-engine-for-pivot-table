@@ -143,5 +143,7 @@ public sealed class PivotController : Controller
     }
 
     private string GetEngineCacheKey(string indexName, FetchData parameter)
-        => $"{indexes.EngineKeyPrefix(indexName)}{parameter.Hash}";
+        // EngineVersion bumps on every reload/disable/delete/edit so stale engines
+        // are never served after the index data changes (spec §12.2 eviction).
+        => $"{indexes.EngineKeyPrefix(indexName)}v{indexes.EngineVersion(indexName)}:{parameter.Hash}";
 }
