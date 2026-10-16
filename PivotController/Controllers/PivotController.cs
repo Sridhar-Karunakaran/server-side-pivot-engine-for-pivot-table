@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Dynamic;
-using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Newtonsoft.Json;
@@ -12,6 +11,12 @@ namespace PivotController.Controllers;
 [Route("api/[controller]")]
 public sealed class PivotController : Controller
 {
+    // The index served to the pivot table is fixed here on the server side for now.
+    // The client does not send an index name yet; when client-side selection is
+    // added later, this constant becomes the fallback and the payload `index`
+    // value takes precedence.
+    private const string ServerIndexName = "Sample-Csv";
+
     private readonly IMemoryCache cache;
     private readonly IIndexManager indexes;
     private bool isRendered;
@@ -35,32 +40,16 @@ public sealed class PivotController : Controller
         FetchData? parameter = JsonConvert.DeserializeObject<FetchData>(payload);
         ArgumentNullException.ThrowIfNull(parameter);
 
-        // Step 1 (index configuration): resolve the client-supplied index name.
-        // `index` is not part of the Syncfusion FetchData contract, so it is read from the
-        // raw payload. Missing index falls back to DataServer:DefaultIndexId (legacy "default").
-        string? requestedIndex;
-        try
-        {
-            using JsonDocument document = JsonDocument.Parse(payload);
-            requestedIndex = document.RootElement.ValueKind == JsonValueKind.Object
-                && document.RootElement.TryGetProperty("index", out JsonElement indexElement)
-                && indexElement.ValueKind == JsonValueKind.String
-                ? indexElement.GetString()
-                : null;
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            requestedIndex = null;
-        }
-
-        IndexSnapshot? resolved = indexes.Resolve(requestedIndex);
+        // Index routing is currently fixed to ServerIndexName on the server side;
+        // no client-supplied index is expected yet.
+        IndexSnapshot? resolved = indexes.Resolve(ServerIndexName);
         if (resolved is null)
         {
             return NotFound(new
             {
                 title = "IndexNotFound",
                 status = 404,
-                detail = $"Index '{requestedIndex}' was not found.",
+                detail = $"Index '{ServerIndexName}' was not found.",
                 validIndexes = indexes.List().Select(i => i.Index)
             });
         }
