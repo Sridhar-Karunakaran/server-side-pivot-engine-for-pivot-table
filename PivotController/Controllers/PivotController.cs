@@ -15,7 +15,7 @@ public sealed class PivotController : Controller
     // The client does not send an index name yet; when client-side selection is
     // added later, this constant becomes the fallback and the payload `index`
     // value takes precedence.
-    private const string ServerIndexName = "Sample-Csv";
+    private const string ServerIndexName = "Sales-Json";
 
     private readonly IMemoryCache cache;
     private readonly IIndexManager indexes;
