@@ -46,4 +46,6 @@ public interface IIndexManager
     string DataKey(string indexName);
     string EngineKeyPrefix(string indexName);
     int EngineVersion(string indexName);
+    /// <summary>Field-name → .NET type as loaded after Mapping/autodetect (first data row).</summary>
+    IReadOnlyDictionary<string, string> GetFieldTypes(string indexName);
 }

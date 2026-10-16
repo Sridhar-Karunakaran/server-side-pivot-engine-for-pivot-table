@@ -364,6 +364,17 @@ public sealed class IndexManager : IIndexManager
 
     public int EngineVersion(string indexName) => _engineVersion.GetOrAdd(indexName, 1);
 
+    public IReadOnlyDictionary<string, string> GetFieldTypes(string indexName)
+    {
+        IReadOnlyList<ExpandoObject> data = GetDataAsync(indexName).ConfigureAwait(false).GetAwaiter().GetResult();
+        if (data.Count == 0)
+        {
+            return new Dictionary<string, string>();
+        }
+        IDictionary<string, object?> row = data[0];
+        return row.ToDictionary(pair => pair.Key, pair => pair.Value?.GetType().Name ?? "null");
+    }
+
     private static void Validate(IndexDefinition definition, bool isNew)
     {
         if (string.IsNullOrWhiteSpace(definition.Index))

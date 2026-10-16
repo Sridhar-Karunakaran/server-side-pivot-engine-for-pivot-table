@@ -146,6 +146,30 @@ public sealed class IndexController : ControllerBase
         }
     }
 
+    [HttpGet("{index}/fields")]
+    public IActionResult FieldTypes(string index)
+    {
+        try
+        {
+            // Shows the resulting .NET type per field AFTER mapping/autodetect,
+            // so field-mapping configuration can be verified from the data server
+            // without a client field panel.
+            return Ok(_indexes.GetFieldTypes(index));
+        }
+        catch (IndexNotFoundException exception)
+        {
+            return NotFoundProblem(index, exception.ValidIndexes);
+        }
+        catch (IndexDisabledException)
+        {
+            return StatusCode(423, Problem("IndexDisabled", 423, $"Index '{index}' is disabled."));
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
+        {
+            return Problem(statusCode: 502, title: "IndexLoadFailed", detail: exception.Message);
+        }
+    }
+
     [HttpPost("{index}/test-connection")]
     public async Task<IActionResult> TestConnection(string index)
     {
