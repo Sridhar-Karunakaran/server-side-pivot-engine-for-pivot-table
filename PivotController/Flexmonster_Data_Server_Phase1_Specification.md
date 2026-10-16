@@ -2,9 +2,9 @@
 
 ## Document Information
 
-- **Version:** 2.0
+- **Version:** 2.1
 - **Phase:** Phase 1 – Backend Infrastructure + Client Integration
-- **Scope:** Server-Side Controller, Configuration Management, Index Configuration, Client-Side Sample Configuration
+- **Scope:** Server-Side Controller, Configuration Management, Index Configuration (full Flexmonster Indexes-tab parity: multiple JSON/CSV/DB sources, edit, reload, enable/disable, mapping, refresh time), JSON File-Driven Configuration Testing, Client-Side Sample Configuration
 - **Out of Scope:** Admin Panel UI, Monitoring UI, Diagnostics UI
 - **Repository:** `server-side-pivot-engine-for-pivot-table` → `PivotController/`
 
@@ -36,6 +36,8 @@ The server-side controller shall:
 - Support structured Logging with configurable minimum level.
 - Persist configurations and expose REST APIs for the future Admin Panel.
 - Expose a simple, stable endpoint URL (e.g., `http://localhost:5285/api/pivot/post`) that the Admin Panel will target in Phase 2 to update server settings at runtime.
+- Support full Flexmonster Indexes-tab parity: add indexes from multiple JSON/CSV files and multiple databases; edit indexes (everything except the data source type); reload indexes manually and on a configured refresh time; enable/disable indexes; per-field Mapping (Number/String/Date) with autodetect as default; CSV delimiter/decimal/thousands separator options; database connection-string Test.
+- Support JSON file-driven configuration testing: every Data Server option is editable in a runtime JSON settings file whose changes are detected and applied to the running backend without code changes (hot-applied where possible, flagged `requiresRestart` otherwise), so each Phase 1 setting can be verified by editing the file alone.
 
 ---
 
@@ -137,7 +139,7 @@ After Phase 1, the running data server exposes one simple endpoint URL, e.g. `ht
                                        │          (Sqlite, SqlServer,  │
                                        │           PostgreSql, MySql,  │
                                        │           Oracle, MariaDb)    │
-                                       └──────────────┬────────────────┘
+                                       └────────────┬────────────────┘
                                                       │
                               ┌───────────────────────▼────────┐
                               │   Logging (manager categories)  │
@@ -177,7 +179,7 @@ After Phase 1, the running data server exposes one simple endpoint URL, e.g. `ht
 ## Index Manager (implementation Step 1)
 
 - Loading index definitions from `appsettings.json` at startup.
-- Creating, reloading, and deleting indexes.
+- Creating, editing, reloading, deleting, enabling, and disabling indexes.
 - Resolving the requested index by name from pivot requests.
 - Managing cache per index, retry processing, keep-data-on-refresh.
 
@@ -413,6 +415,9 @@ Following the Flexmonster approach, indexes are declared in `appsettings.json`. 
         "SourceType": "Csv",
         "SourcePath": "sales.csv",
         "CsvDelimiter": ",",
+        "CsvDecimalSeparator": ".",
+        "CsvThousandsSeparator": ",",
+        "MappingEnabled": false,
         "AutoReload": false,
         "ReloadIntervalMinutes": 0,
         "Enabled": true
@@ -422,12 +427,18 @@ Following the Flexmonster approach, indexes are declared in `appsettings.json`. 
         "Name": "Sales JSON",
         "SourceType": "Json",
         "SourcePath": "sales-analysis.json",
+        "MappingEnabled": true,
+        "FieldMappings": [
+          { "FieldName": "TotalRevenue", "Type": "Number" },
+          { "FieldName": "OrderDate", "Type": "Date" }
+        ],
         "Enabled": true
       },
       {
         "Index": "Sales-Db",
         "Name": "Sales Database",
         "SourceType": "Database",
+        "DatabaseType": "MSSQL",
         "ConnectionStringName": "SalesDb",
         "Query": "SELECT Region, Country, ItemType, SalesChannel, OrderDate, UnitsSold, TotalRevenue, TotalCost, TotalProfit FROM Sales",
         "Enabled": true
@@ -446,27 +457,38 @@ Following the Flexmonster approach, indexes are declared in `appsettings.json`. 
 
 ```csharp
 public enum DataSourceType { Json, Csv, SqlServer, PostgreSQL, MySql, Oracle, MariaDb }
+public enum DatabaseType { MySql, MariaDB, MSSQL, PostgreSQL, Oracle, Sqlite }
+public enum MappingDataType { Number, String, Date }
 
 public class IndexDefinition
 {
     public required string Index { get; set; }   // index name, e.g. "Sales-Data" (unique, immutable)
     public required string Name { get; set; }    // display name
-    public DataSourceType SourceType { get; set; }
+    public DataSourceType SourceType { get; set; } // immutable after creation (Flexmonster edit rule)
     public string? SourcePath { get; set; }      // JSON/CSV path under DataFolder
+    // CSV-specific (Flexmonster parity)
+    public char CsvDelimiter { get; set; } = ',';
+    public char CsvDecimalSeparator { get; set; } = '.';
+    public char CsvThousandsSeparator { get; set; } = ',';
+    // Database-specific (Flexmonster parity)
+    public DatabaseType? DatabaseType { get; set; }
     public string? ConnectionStringName { get; set; } // references ConnectionStrings (never inline secrets)
     public string? Query { get; set; }
+    // Refresh time (Flexmonster parity: minutes from server start; 0 = never reload)
     public bool AutoReload { get; set; } = false;
     public int ReloadIntervalMinutes { get; set; } // >0 requires AutoReload=true
-    public bool Enabled { get; set; } = true;
+    // Mapping (Flexmonster parity: disabled by default = autodetect)
+    public bool MappingEnabled { get; set; } = false;
+    public List<IndexFieldMapping>? FieldMappings { get; set; } // cleared when MappingEnabled=false
+    public bool Enabled { get; set; } = true;   // disabled indexes are not preloaded/served
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
 
-public class IndexField
+public class IndexFieldMapping
 {
-    public required string Name { get; set; }
-    public string? Caption { get; set; }
-    public string? TypeHint { get; set; }   // "integer"|"decimal"|"boolean"|"date"|"string"
+    public required string FieldName { get; set; }
+    public MappingDataType Type { get; set; } // Number | String | Date
 }
 ```
 
@@ -486,11 +508,35 @@ public class IndexField
 - Case-insensitive uniqueness; immutable after creation; pattern `[A-Za-z0-9._-]{1,64}`.
 - Pivot requests without an index use `DataServer:DefaultIndexId`.
 
+### Flexmonster Indexes-Tab Parity (new in v2.1)
+
+**Add Index.** An index may point at any JSON file, CSV file, or supported database. Multiple indexes — including several JSON/CSV files and several databases — coexist in the `Indexes` array; each is loaded and cached independently under `data:{index}`.
+
+**Edit Index.** Every property is editable except `SourceType` (Flexmonster rule: the data source type cannot be changed after creation). Editing is applied via `PUT /api/indexes/{index}` (or by editing the settings JSON file, see §12.5); a successful edit persists metadata and reloads the index data.
+
+**Delete Index.** `DELETE /api/indexes/{index}` removes metadata and evicts `data:{index}` + `engine:{index}:*`. Consumers are prompted to confirm (Phase 2 UI parity; Phase 1 exposes the endpoint).
+
+**Reload Index.** Manual reload: `POST /api/indexes/{index}/reload`. Automatic reload: `Refresh time` = `ReloadIntervalMinutes`, measured from Data Server startup; `0` (default) means never reload. Semantics governed by `AutoReload`, `KeepDataOnRefresh`, retry policy (§12, §13).
+
+**Enable / Disable Index.** `POST /api/indexes/{index}/disable` / `enable`. Disabled indexes are **not preloaded at startup**, their `data:{index}` cache slot is evicted, and pivot requests against them return `423 Disabled` (status reported via `GET /api/indexes/{index}` → `status: "Disabled"`). Enabled indexes reload immediately.
+
+**Mapping (JSON/CSV only).** Disabled by default — all field types are autodetected. When enabled, each field's type can be set to **Number**, **String**, or **Date**. Disabling Mapping deletes all adjustments and reverts to autodetection. Applies on next load/edit-save.
+
+**CSV separators.** `CsvDelimiter` (default `,`), `CsvDecimalSeparator` (default `.`), `CsvThousandsSeparator` (default `,`) mirror the Flexmonster CSV index options.
+
+**Database Test.** `POST /api/indexes/{index}/test-connection` executes `SELECT 1` against the configured connection and returns `200 { success: true, latencyMs }` or `502 { success: false, error }`.
+
+**Connection-string password rule (Flexmonster parity).** `;` and `"` are treated as delimiters. Passwords containing them must be enclosed in single quotes, e.g. `Pwd='123;"45'`. The connection-string parser must implement this rule for inline test strings; persisted production indexes continue to reference `ConnectionStrings:Name` (no inline secrets).
+
 ### Index Lifecycle
 
 ```text
 POST   /api/indexes                      → create (bootstrap-verified), immediately load if Enabled
+PUT    /api/indexes/{index}               → edit (all except SourceType), save + reload
 POST   /api/indexes/{index}/reload       → reload data (KeepDataOnRefresh semantics, retry policy)
+POST   /api/indexes/{index}/enable       → enable + load
+POST   /api/indexes/{index}/disable      → disable + evict data
+POST   /api/indexes/{index}/test-connection → test DB connection (Database indexes)
 DELETE /api/indexes/{index}              → remove metadata + evict cache
 GET    /api/indexes                      → list index metadata + status
 GET    /api/indexes/{index}              → index detail + status
@@ -636,6 +682,7 @@ Response: unchanged (serialized pivot values / members / raw data / export file)
 Behavior:
 - `index` is the client-supplied index name. Missing → `DefaultIndexId`.
 - Unknown index → `404 IndexNotFound` with a problem-details body naming the valid indexes.
+- Disabled index → `423 IndexDisabled`.
 - All actions (`fetchFieldMembers`, `fetchRawData`, exports, pivot values) are routed to the resolved index's dataset.
 
 After Phase 1, this endpoint is available at a simple URL such as `http://localhost:5285/api/pivot/post`. The future Admin Panel points to this URL and to the management APIs below to inspect/update server settings.
@@ -654,9 +701,13 @@ After Phase 1, this endpoint is available at a simple URL such as `http://localh
 | GET | `/api/indexes` | List index metadata + status | 200 | — |
 | GET | `/api/indexes/{index}` | Index detail + status | 200 | 404 |
 | POST | `/api/indexes` | Create + load index | 201 | 409 / 422 |
+| PUT | `/api/indexes/{index}` | Edit index (all except `sourceType`) → save + reload | 200 | 404 / 422 |
 | POST | `/api/indexes/{index}/reload` | Reload data | 200 | 404 / 502 / 504 |
+| POST | `/api/indexes/{index}/test-connection` | Test DB connection string | 200 | 404 / 502 |
+| POST | `/api/indexes/{index}/enable` | Enable index (loads data) | 200 | 404 |
+| POST | `/api/indexes/{index}/disable` | Disable index (evicts data) | 200 | 404 |
 | DELETE | `/api/indexes/{index}` | Delete + evict cache | 204 | 404 |
-| POST | `/api/pivot/post` | Existing endpoint (+ optional `index`) | 200 | 400/404/401 |
+| POST | `/api/pivot/post` | Existing endpoint (+ optional `index`) | 200 | 400/404/423/401 |
 | POST | `/api/reportsharing/reports` | Save report | 201 `{reportId}` | 404 / 507 |
 | GET | `/api/reportsharing/reports/{reportId}` | Retrieve report | 200 | 404 / 410 |
 | DELETE | `/api/reportsharing/reports/{reportId}` | Delete report | 204 | 404 |
@@ -706,6 +757,50 @@ Response `201`:
   "loadedAt": "2025-01-01T10:00:00Z",
   "lastError": null
 }
+```
+
+**PUT `/api/indexes/{index}`** — edit (all except `sourceType`):
+
+```json
+{
+  "index": "sales-csv",
+  "name": "Sales CSV (renamed)",
+  "sourceType": "Csv",          // must match existing type; change → 422
+  "sourcePath": "sales-2025.csv",
+  "csvDelimiter": ";",
+  "csvDecimalSeparator": ",",
+  "csvThousandsSeparator": ".",
+  "mappingEnabled": true,
+  "fieldMappings": [ { "fieldName": "UnitsSold", "type": "Number" },
+                     { "fieldName": "OrderDate", "type": "Date" } ],
+  "reloadIntervalMinutes": 30
+}
+```
+
+Response `200`:
+
+```json
+{
+  "index": "sales-csv",
+  "status": "Ready",
+  "rowCount": 10240,
+  "loadedAt": "2025-01-01T11:30:00Z",
+  "lastError": null
+}
+```
+
+**POST `/api/indexes/{index}/test-connection`** — Database indexes only:
+
+Response `200`:
+
+```json
+{ "success": true, "latencyMs": 42 }
+```
+
+Response `502`:
+
+```json
+{ "success": false, "error": "Unable to connect: login failed for user 'sa'." }
 ```
 
 **POST `/api/reportsharing/reports`**:
@@ -796,8 +891,8 @@ The data server is now reachable at a stable URL, e.g. `http://localhost:5285/ap
 
 | Artifact | Location | Initial source | Runtime management |
 |----------|----------|----------------|--------------------|
-| Configuration | `DataServer/config.json` | defaults + `appsettings.json` overrides | PUT /api/config |
-| Index definitions | `DataServer/indexes.json` | **`appsettings.json` bootstrap (Step 1)** | POST/GET/RELOAD/DELETE /api/indexes |
+| Configuration | `DataServer/config.json` | defaults + `appsettings.json` overrides | PUT /api/config, file hot-reload (§12.5) |
+| Index definitions | `DataServer/indexes.json` | **`appsettings.json` bootstrap (Step 1)** | POST/PUT/GET/RELOAD/DELETE/ENABLE/DISABLE /api/indexes |
 | Users | `DataServer/users.json` | empty (admin created via API) | /api/security/users |
 | Reports | `DataServer/reports/` | — | /api/reportsharing/* |
 
@@ -820,16 +915,29 @@ CreateIndex(definition)
       ├─ transient failure → retry (backoff, ≤ RetryAttempts)
       └─ persistent failure → 502 { status: "Failed", lastError }
 
+Edit(index, patch)
+  → reject SourceType change → 422
+  → persist metadata (atomic) → Reload(index) semantics → 200
+
 Reload(index)
   → if KeepDataOnRefresh: pin old entry
   → LoadAsync(...)
       ├─ success → replace data entry
       └─ failure && KeepDataOnRefresh → 502 (old data still served)
 
+Disable(index)
+  → Evict(data:{index}), Evict(engine:{index}:*) → status "Disabled"
+  → pivot requests → 423; not preloaded at startup
+
+Enable(index)
+  → LoadAsync(...) → status "Ready" (or "Failed" per retry policy)
+
 Delete(index)
   → Evict(data:{index}), Evict(engine:{index}:*)
   → remove metadata → 204
 ```
+
+Status values: `Ready | Refreshing | Failed | Disabled`.
 
 ## 12.2 Cache Key Scheme
 
@@ -849,7 +957,60 @@ await boot.EnsureDefaultIndexAsync(); // one-time legacy PivotDataSource → "de
 ## 12.4 Auto-Reload
 
 - `AutoReload=true` + `ReloadIntervalMinutes>0` → `PeriodicTimer` per index.
+- Refresh time is measured from Data Server startup (Flexmonster semantics); `0` = never reload.
 - Reload failures are logged, never crash the host; `KeepDataOnRefresh` governs continuity.
+
+## 12.5 JSON File-Driven Configuration Testing (new in v2.1)
+
+Phase 1 is configuration-heavy; verifying each option by editing code is impractical. Instead, the running backend watches a single human-editable JSON settings file — the runtime configuration document persisted by `ConfigurationPersistenceService` — and applies changes at runtime.
+
+### File
+
+- Location: `PivotController/DataServer/config.json` (runtime data; gitignored; §13.4 `AtomicJsonStore`).
+- Contents: the full §7 hierarchy **plus** the `Indexes` array — every Data Server option and value in one place.
+- Structure mirrors `GET /api/config` output (§9.3), so the file, the API, and the future Admin Panel share one schema.
+
+### Hot-Reload Pipeline
+
+1. `FileSystemWatcher` on `DataServer/*.json` (rename/replace-safe) + 500 ms debounce + atomic-rename detection (editors save via temp-file rename).
+2. Parse + validate the whole document (`ConfigurationValidator`). On failure: keep last-known-good config, log `Error ConfigReloadFailed {reason}`, continue serving.
+3. Compute delta vs. current config; apply per-option:
+
+| Option | Applies at runtime? |
+|---|---|
+| `Indexes` (add/edit/delete/enable/disable/mapping/reload time) | Yes — index reload via §12 semantics |
+| `Security.BasicAuthEnabled`, `AllowedOrigins`, users | Yes |
+| `ReportSharing.EndpointEnabled` | Yes |
+| `General.MinimumLogLevel` | Yes |
+| `DatabaseQuery.*` | Yes (next query) |
+| `General.Port`, `General.DataFolder` | **No — requiresRestart** (log warning) |
+| `Https.*` (cert, protocols) | **No — requiresRestart** |
+| `DataStorage.CacheSizeLimit`, `MaxCacheItemSizeBytes` | **No — requiresRestart** (§26.2) |
+
+4. Result logged: `Info ConfigReloaded {appliedSections, requiresRestartSections}`.
+
+### Example test file (excerpt)
+
+```json
+{
+  "ConfigVersion": "1.0",
+  "DefaultIndexId": "Sales-Data",
+  "General": { "Port": 5285, "MinimumLogLevel": "Info" },
+  "DataStorage": { "RetryAttempts": 3, "CacheSizeLimit": 100, "KeepDataOnRefresh": true },
+  "DatabaseQuery": { "CommandTimeoutEnabled": true, "CommandTimeLimit": 150 },
+  "Https": { "Enabled": false, "Protocols": "HTTP1_AND_HTTP2" },
+  "Security": { "BasicAuthEnabled": false, "AllowedOrigins": ["*"] },
+  "ReportSharing": { "EndpointEnabled": false },
+  "Indexes": [
+    { "Index": "Sales-Data", "SourceType": "Csv", "SourcePath": "sales.csv",
+      "CsvDelimiter": ",", "MappingEnabled": false, "ReloadIntervalMinutes": 0, "Enabled": true },
+    { "Index": "Sales-Db", "SourceType": "Database", "DatabaseType": "PostgreSQL",
+      "ConnectionStringName": "PgSales", "Query": "SELECT * FROM Sales", "Enabled": true }
+  ]
+}
+```
+
+Editing any value in this file is reflected in the backend (watcher latency ≤ 1 s) — no code change, no rebuild, restart only for the `requiresRestart` options above. This is the primary Phase 1 manual test loop.
 
 ---
 
@@ -858,7 +1019,7 @@ await boot.EnsureDefaultIndexAsync(); // one-time legacy PivotDataSource → "de
 ## 13.1 Data Providers
 
 - `JsonDataProvider` — flat-array validation, field-set consistency, type conversion (reuse of existing `LoadJsonAsync` logic).
-- `CsvDataProvider` — header validation, column-count checks, per-column type inference (reuse of existing `LoadCsv` logic).
+- `CsvDataProvider` — header validation, column-count checks, per-column type inference honoring `CsvDelimiter`, `CsvDecimalSeparator`, `CsvThousandsSeparator`, and Mapping overrides (reuse of existing `LoadCsv` logic).
 - `DatabaseDataProvider` — see §14.
 - `DynamicDataLoader` is kept as a thin facade implementing `IDataSourceProvider` for minimal controller changes.
 
@@ -902,19 +1063,20 @@ public interface IDatabaseQueryProvider
 
 ```text
 Validate Query (single SELECT, no ';')
-  → CreateConnection(connectionString, ReadOnly)
-  → OpenAsync (timeout budget starts; reconnection retried per policy)
-  → CommandTimeout = CommandTimeLimit (when CommandTimeoutEnabled; 0 = infinite)
-  → ExecuteReaderAsync(cancellationToken)
-      ├─ timeout → cancel command → DatabaseTimeoutException → retry logic
-      └─ rows → map to ExpandoObject (validated headers)
-  → IReadOnlyList<ExpandoObject>
+ → CreateConnection(connectionString, ReadOnly)
+ → OpenAsync (timeout budget starts; reconnection retried per policy)
+ → CommandTimeout = CommandTimeLimit (when CommandTimeoutEnabled; 0 = infinite)
+ → ExecuteReaderAsync(cancellationToken)
+     ├─ timeout → cancel command → DatabaseTimeoutException → retry logic
+     └─ rows → map to ExpandoObject (validated headers)
+ → IReadOnlyList<ExpandoObject>
 ```
 
 ## 14.3 Connection Strings
 
 - Stored by name in `appsettings.json` `ConnectionStrings` or user-secrets; referenced via `ConnectionStringName`.
 - Never persisted in `config.json` or `indexes.json`.
+- Inline connection strings supplied to the Test-connection endpoint are parsed with the Flexmonster password rule (§6.7): `;` and `"` are delimiters; passwords containing them must be single-quoted (e.g., `Pwd='123;"45'`).
 
 ---
 
@@ -986,7 +1148,7 @@ DataServer/reports/
 ## 17.2 Monitoring (Phase 1 minimal)
 
 - `/health` liveness endpoint → `200 OK` when responsive.
-- Index statuses (`Ready | Loading | Failed | Disabled`) surfaced via `GET /api/indexes`.
+- Index statuses (`Ready | Refreshing | Failed | Disabled`) surfaced via `GET /api/indexes`.
 
 ## 17.3 Validation Rules
 
@@ -1009,7 +1171,7 @@ DataServer/reports/
 | Unknown config section / setting key | 400/404 | Info | prevents silent typos |
 | Index not found | 404 | Info | body lists valid indexes |
 | Duplicate index | 409 | Info | — |
-| Index disabled | 409 | Info | `IndexDisabled` |
+| Index disabled | 423 | Info | `IndexDisabled` |
 | Index load transient failure | 502 | Warn | retried per RetryAttempts; `lastError` on status |
 | Database timeout | 504 | Error | command canceled; status `Failed` |
 | Unsupported provider (package missing) | 422 | Error | names the missing `PackageReference` |
@@ -1032,32 +1194,32 @@ Global filter: `DataServerExceptionFilter : IExceptionFilter` maps exceptions �
 
 ```text
 Program.cs → ConfigurationPersistenceService.EnsureFiles()
-          → IndexBootstrap.EnsureIndexesAsync()
+        → IndexBootstrap.EnsureIndexesAsync()
               read appsettings.json:DataServer:Indexes
               (one-time) migrate legacy PivotDataSource → index "default"
               persist to DataServer/indexes.json
-          → IndexManager.RegisterAll()
-          → Kestrel configured from General.Port (e.g. 5285)
-          → Data server ready: {url}/api/pivot/post
+        → IndexManager.RegisterAll()
+        → Kestrel configured from General.Port (e.g. 5285)
+        → Data server ready: {url}/api/pivot/post
 ```
 
 ## 19.2 Pivot request with client-supplied index
 
 ```text
 PivotView (Sample/pivot.js, index: "Sales-Data")
-   → POST {url}/api/pivot/post { index: "Sales-Data", action, ... }
-   → PivotController extracts FetchData.Index
-   → IndexManager.Resolve("Sales-Data")
-        ├─ unknown → 404 { title: "IndexNotFound", validIndexes: [...] }
-        ├─ disabled → 409 IndexDisabled
-        └─ known → GetDataAsync("Sales-Data")  [cache data:Sales-Data]
-                     (miss → provider load with retry policy)
-   → PivotEngine.GetEngine({ index prefix in cache key })
-   → PerformAction(action)
-   → serialized pivot values → PivotView
+ → POST {url}/api/pivot/post { index: "Sales-Data", action, ... }
+ → PivotController extracts FetchData.Index
+ → IndexManager.Resolve("Sales-Data")
+      ├─ unknown → 404 { title: "IndexNotFound", validIndexes: [...] }
+      ├─ disabled → 423 IndexDisabled
+      └─ known → GetDataAsync("Sales-Data")  [cache data:Sales-Data]
+                   (miss → provider load with retry policy)
+ → PivotEngine.GetEngine({ index prefix in cache key })
+ → PerformAction(action)
+ → serialized pivot values → PivotView
 ```
 
-## 19.3 Index Create / Reload
+## 19.3 Index Create / Edit / Reload / Enable / Disable
 
 ```text
 CreateIndex(definition)
@@ -1068,11 +1230,18 @@ CreateIndex(definition)
       ├─ transient failure → retry (backoff, ≤ RetryAttempts)
       └─ persistent failure → 502 { status: "Failed", lastError }
 
+EditIndex(index, patch)
+  → SourceType changed? → 422
+  → persist metadata → reload → 200 { status, rowCount }
+
 Reload(index)
   → if KeepDataOnRefresh: pin old entry
   → LoadAsync(...)
       ├─ success → replace data entry
       └─ failure && KeepDataOnRefresh → 502 (old data still served)
+
+Disable(index)  → Evict(data, engine) → 200 { status: "Disabled" }
+Enable(index)   → LoadAsync(...)       → 200 { status: "Ready" }
 ```
 
 ---
@@ -1099,6 +1268,7 @@ PivotController/Configuration/
 ├── Validation/ConfigurationValidator.cs
 ├── Services/ConfigurationService.cs
 ├── Services/ConfigurationPersistenceService.cs
+├── Services/ConfigurationFileWatcher.cs     (§12.5 hot-reload watcher)
 └── Options/DataServerOptions.cs
 PivotController/Core/
 ├── Persistence/AtomicJsonStore.cs
@@ -1143,13 +1313,13 @@ Tests/PivotController.Tests/                   (xUnit)
 
 | # | Milestone | Scope |
 |---|-----------|-------|
-| **1** | **Index Configuration (Step 1)** | `IndexDefinition` model; `appsettings.json` index registration; bootstrap/migration of legacy `PivotDataSource`; `IndexManager` (create/reload/delete/list); per-index cache keys; index-aware pivot routing with `FetchData.Index`; `DefaultIndexId` fallback |
+| **1** | **Index Configuration (Step 1)** | `IndexDefinition` model; `appsettings.json` index registration; bootstrap/migration of legacy `PivotDataSource`; `IndexManager` (create/edit/reload/delete/list/enable/disable); per-index cache keys; index-aware pivot routing with `FetchData.Index`; `DefaultIndexId` fallback; edit/enable/disable/test-connection endpoints; CSV separators; Mapping; settings-file hot-reload of indexes |
 | 2 | General & Data Storage Settings | Port, MinimumLogLevel, DataFolder; RetryAttempts, CacheSizeLimit, KeepDataOnRefresh, MaxCacheItemSizeBytes |
 | 3 | Database Query Settings | CommandTimeoutEnabled, CommandTimeLimit; `IDatabaseQueryProvider` abstraction (SQLite first); timeout enforcement |
 | 4 | HTTPS Settings | PFX/PEM/store certificate resolution; Kestrel binding; protocol selection |
 | 5 | Security Settings | User model + PBKDF2; Basic Auth middleware; CORS OriginValidator; user CRUD APIs |
 | 6 | Report Sharing Settings | ReportSharingService; expiry/quota sweep worker; report APIs |
-| 7 | Persistence + Logging + Config APIs | AtomicJsonStore; config.json/users.json persistence; rolling file logger; `ConfigController`; health endpoint; error-handling filter |
+| 7 | Persistence + Logging + Config APIs + Hot-Reload | AtomicJsonStore; config.json/users.json persistence; rolling file logger; `ConfigController`; health endpoint; error-handling filter; `ConfigurationFileWatcher` hot-reload (§12.5) |
 | **8** | **Client-side sample configuration (final)** | Update `Sample/pivot.js` to send `index` (sample-level or source-level constant); verify `http://localhost:5285/api/pivot/post` serves the named index; document URL for Admin Panel integration |
 
 ---
@@ -1163,6 +1333,15 @@ Tests/PivotController.Tests/                   (xUnit)
 - [ ] A pivot request containing `index: "Sales-Data"` returns data from that index's dataset.
 - [ ] A request with an unknown index returns `404` naming the valid indexes.
 - [ ] A request without `index` still works (legacy `default` index) — `Sample/pivot.html` behavior unchanged.
+- [ ] Multiple indexes across JSON files, CSV files, and databases coexist and serve independently.
+- [ ] Editing an index (name, path, query, separators, mapping, refresh time) via API or settings file applies without restart; changing `sourceType` is rejected with 422.
+- [ ] Deleting an index evicts its data; pivot requests to it return 404.
+- [ ] Manual reload returns 200 and refreshes data; `Refresh time` auto-reloads from server start (0 = never).
+- [ ] Disabled indexes are not preloaded and return 423; enabling reloads and serves again.
+- [ ] Mapping toggle works: enabled → per-field Number/String/Date honored; disabled → adjustments deleted, autodetect restored.
+- [ ] CSV delimiter / decimal / thousands separators are honored on load.
+- [ ] Test-connection endpoint returns success/failure with latency.
+- [ ] Editing any runtime-applicable option in `DataServer/config.json` is reflected in the backend within 1 s (watcher); invalid edits keep last-known-good config and log an error; restart-requiring options log `requiresRestart`.
 
 ## General Settings
 
@@ -1206,16 +1385,16 @@ Tests/PivotController.Tests/                   (xUnit)
 
 - [ ] `Sample/pivot.js` passes the index name (sample-level or source-level constant) on every request.
 - [ ] `http://localhost:5285/api/pivot/post` is the single, documented endpoint of the Phase 1 data server.
-- [ ] Pointing the Admin Panel at this URL (Phase 2) requires no backend changes.
 
 ---
 
 # 23. Testing Strategy
 
 - **Unit:** model defaults; validator rules; `RetryPolicy`; `PBKDF2PasswordHasher`; `OriginValidator`; `AtomicJsonStore` (corrupt-file quarantine); quota math.
-- **Integration (WebApplicationFactory):** config CRUD (422/404/merge-patch); index lifecycle against fixture JSON/CSV/SQLite; Basic Auth (401/200); CORS (403/200); report create/read/expire/delete; timeout stub provider (504).
+- **Integration (WebApplicationFactory):** config CRUD (422/404/merge-patch); index lifecycle against fixture JSON/CSV/SQLite (create/edit/reload/enable/disable); Basic Auth (401/200); CORS (403/200); report create/read/expire/delete; timeout stub provider (504).
 - **Regression:** existing `PivotController` actions (fetchFieldMembers / fetchRawData / exports) against the migrated `default` index.
 - **E2E (manual):** run `Sample/pivot.html` against the server with `index: "Sales-Data"` — pivot table renders from the named index.
+- **Manual settings-file testing loop (§12.5):** for each Phase 1 option, edit its value in `DataServer/config.json` and verify the behavior change in the running backend (see §22 acceptance criteria).
 
 ---
 
@@ -1223,8 +1402,9 @@ Tests/PivotController.Tests/                   (xUnit)
 
 ## Included
 
-- Index Configuration (appsettings.json registration + Index Manager + APIs)
+- Index Configuration (appsettings.json registration + Index Manager + APIs, incl. edit/enable/disable/test-connection)
 - Configuration Models + Configuration APIs
+- JSON File-Driven Configuration Testing (settings-file hot-reload)
 - User Management APIs + Basic Auth
 - Index Management APIs
 - HTTPS, Security, Report Sharing configurations
@@ -1263,6 +1443,8 @@ Tests/PivotController.Tests/                   (xUnit)
 8. **Atomic write on Windows** — temp file must be created in the same directory as the target (`File.Replace` fails cross-volume).
 9. **Log volume** — keep pivot hit-logging at `Debug`.
 10. **Legacy `DataSource.cs`** (`WebClient` sample classes) — mark `[Obsolete]` rather than delete.
+11. **Settings-file watcher reliability** — editors write via temp-file rename; the watcher must debounce and validate before applying; invalid JSON keeps last-known-good (§12.5).
+12. **Hot-reload during in-flight pivot requests** — index reload on file change follows the same `SemaphoreSlim`/`KeepDataOnRefresh` protection as item 7.
 
 ---
 
@@ -1278,4 +1460,4 @@ Tests/PivotController.Tests/                   (xUnit)
 
 # Conclusion
 
-Phase 1 delivers a backend-first data server where **index configuration is implemented first**, indexes are declared in `appsettings.json` (Flexmonster style), **the client passes the index name on every pivot request**, and the **final step wires the client-side pivot table sample** to the data server's simple endpoint URL. All seven Data Server settings sections — General, Data Storage, Database Query, HTTPS, Security, Report Sharing, and Index Configuration — are configurable server-side with documented defaults, validation, persistence, and management APIs. After Phase 1, the data server exposes `{url}/api/pivot/post` plus a complete management API surface, so the Phase 2 Admin Panel can update all backend settings without architectural changes.
+Phase 1 delivers a backend-first data server where **index configuration is implemented first**, indexes are declared in `appsettings.json` (Flexmonster style) with full **Indexes-tab parity** — multiple JSON/CSV/DB sources, editable indexes, manual and refresh-time reloads, enable/disable, per-field Mapping, CSV separators, and connection testing — **the client passes the index name on every pivot request**, and the **final step wires the client-side pivot table sample** to the data server's simple endpoint URL. Every Data Server option is additionally verifiable through the **JSON settings file hot-reload loop (§12.5)**, so each Phase 1 setting can be tested by editing a value in `DataServer/config.json` without code changes. All seven Data Server settings sections — General, Data Storage, Database Query, HTTPS, Security, Report Sharing, and Index Configuration — are configurable server-side with documented defaults, validation, persistence, and management APIs. After Phase 1, the data server exposes `{url}/api/pivot/post` plus a complete management API surface, so the Phase 2 Admin Panel can update all backend settings without architectural changes.
