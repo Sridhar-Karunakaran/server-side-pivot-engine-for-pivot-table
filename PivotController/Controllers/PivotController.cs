@@ -40,6 +40,11 @@ public sealed class PivotController : Controller
         FetchData? parameter = JsonConvert.DeserializeObject<FetchData>(payload);
         ArgumentNullException.ThrowIfNull(parameter);
 
+        // The engine dereferences customProperties.Locale unguarded (InitProperties),
+        // so InternalProperties must never be null or Locale-derivation throws NRE.
+        parameter.InternalProperties ??= new InternalProperties { Locale = "{}" };
+        parameter.InternalProperties.Locale ??= "{}";
+
         // Index routing is currently fixed to ServerIndexName on the server side;
         // no client-supplied index is expected yet.
         IndexSnapshot? resolved = indexes.Resolve(ServerIndexName);
