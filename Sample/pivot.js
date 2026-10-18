@@ -4,7 +4,7 @@
 var PIVOT_INDEX = 'Sample-Csv';
 var pivotGridObj = new ej.pivotview.PivotView({
     dataSourceSettings: {
-        url: 'http://localhost:5285/api/pivot/post',
+        url: window.location.protocol + '//' + window.location.host + '/api/pivot/post',
         index: PIVOT_INDEX,
         mode: 'Server',
         type: 'JSON',
@@ -17,8 +17,10 @@ var pivotGridObj = new ej.pivotview.PivotView({
             name: 'Year', caption: 'Year'
         }],
         values: [{
-            name: 'Amount', caption: 'Amount'
-        },],
+            name: 'Sold', caption: 'Sold'
+        }, {
+            name: 'Price', caption: 'Price'
+        }],
         allowMemberFilter: true
     },
     enableVirtualization: true,

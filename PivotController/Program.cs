@@ -133,6 +133,16 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseRouting();
 app.UseCors(CustomOrigins);
+app.UseDefaultFiles();
+// Serve the Sample/ folder (pivot.html + pivot.js) from the sibling directory so the
+// sample is runnable directly from the server origin (no separate static host needed).
+Microsoft.Extensions.FileProviders.IFileProvider sampleFiles = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
+    Path.GetFullPath(Path.Combine(contentRoot, "..", "Sample")));
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = sampleFiles,
+    RequestPath = "/sample"
+});
 app.UseExceptionHandler();
 app.UseAuthorization();
 app.MapControllers();
