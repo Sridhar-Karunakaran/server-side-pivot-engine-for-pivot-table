@@ -7,7 +7,7 @@ var pivotGridObj = new ej.pivotview.PivotView({
         expandAll: false,
         rows: [{ name: 'Sector', caption: 'Sector' }],
         columns: [{ name: 'PowerUnits', caption: 'PowerUnits' }],
-        values: [{ name: 'Sold', caption: 'Sold' }, { name: 'Price', caption: 'Price' }],
+        values: [{ name: 'PowerUnits', caption: 'PowerUnits' }],
         filters: []
     },
     showGroupingBar: true,
