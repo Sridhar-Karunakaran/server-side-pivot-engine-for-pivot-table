@@ -6,6 +6,302 @@
 
 ---
 
+## 0. General Settings Configuration
+
+### 0.1 Configuration Model
+
+The `GeneralSettings` class encapsulates core server behavior:
+
+```csharp
+public enum LogLevelOption { Info, Warn, Error, Fatal }
+
+public class GeneralSettings
+{
+    public int Port { get; set; } = 9500;
+    public LogLevelOption MinimumLogLevel { get; set; } = LogLevelOption.Info;
+    public string DataFolder { get; set; } = "DataSource";
+}
+```
+
+### 0.2 Port Configuration
+
+**SHALL** accept valid port numbers (1–65535) and bind the Kestrel listener to that port.
+
+| Property | Default | Validation | Requires Restart | Description |
+|----------|---------|------------|:---:|---|
+| **Port** | 9500 | int 1–65535 | **Yes** | HTTP/HTTPS listener port; changes require server restart |
+
+**Scenario 0.2.1: Default Port**
+- Given: Port not specified in `appsettings.json`
+- When: Application starts
+- Then: Server binds to port 9500
+
+**Scenario 0.2.2: Custom Port via appsettings.json**
+- Given: `appsettings.json` contains `DataServer: { General: { Port: 5285 } }`
+- When: Application starts
+- Then: Server binds to port 5285
+
+**Scenario 0.2.3: Port Update via API (Requires Restart)**
+- Given: Server running on port 5285
+- When: `PUT /api/config/general { Port: 5286 }`
+- Then: Returns 200 with response `{ success: true, requiresRestart: true, message: "Port change requires server restart" }`
+- And: Old port still active until restart
+
+**Scenario 0.2.4: Restart Applies Port Change**
+- Given: Configuration updated to port 5286, `requiresRestart: true` response received
+- When: Server restarts
+- Then: Server binds to port 5286; clients redirect/reconnect to new port
+
+**Scenario 0.2.5: Invalid Port Number (Too Low)**
+- Given: Port configuration update with value 0
+- When: `PUT /api/config/general { Port: 0 }`
+- Then: Returns 422 Validation Error with message "Port must be between 1 and 65535"
+- And: Configuration unchanged
+
+**Scenario 0.2.6: Invalid Port Number (Too High)**
+- Given: Port configuration update with value 99999
+- When: `PUT /api/config/general { Port: 99999 }`
+- Then: Returns 422 Validation Error with message "Port must be between 1 and 65535"
+- And: Configuration unchanged
+
+**Scenario 0.2.7: Port Already in Use (Startup)**
+- Given: Another service already uses port 5285
+- When: Application attempts to start with `Port: 5285`
+- Then: Startup fails with error log "Address already in use (port 5285)"
+- And: Application exits with non-zero exit code
+
+### 0.3 Minimum Log Level Configuration
+
+**SHALL** accept one of four valid log levels and apply to all subsequent log output without requiring restart.
+
+| Property | Default | Validation | Requires Restart | Description |
+|----------|---------|------------|:---:|---|
+| **MinimumLogLevel** | Info | Info / Warn / Error / Fatal | **No** | Minimum severity for all logged messages; applied immediately |
+
+#### Valid Log Levels
+
+| Level | Severity | Description | Typical Usage |
+|-------|----------|-------------|---|
+| **INFO** | Low | Informational messages | Startup, shutdown, index load success |
+| **WARN** | Medium | Warning conditions | Deprecated API usage, fallback behaviors, recoverable errors |
+| **ERROR** | High | Error conditions | Failed operations, data validation failures, provider errors |
+| **FATAL** | Critical | System-threatening failures | Uncaught exceptions, data corruption, unrecoverable state |
+
+**Scenario 0.3.1: Default Log Level (Info)**
+- Given: `MinimumLogLevel` not specified in `appsettings.json`
+- When: Application starts
+- Then: All INFO, WARN, ERROR, and FATAL messages logged; DEBUG messages filtered
+- And: Console shows messages at all these levels
+- And: Log file includes all these levels
+
+**Scenario 0.3.2: Increase Log Level to Warn**
+- Given: Currently logging at Info level
+- When: `PUT /api/config/general { MinimumLogLevel: "Warn" }`
+- Then: Returns 200 with response `{ success: true, requiresRestart: false, message: "Log level changed to Warn" }`
+- And: Change applied immediately
+- And: INFO messages now filtered out; only WARN, ERROR, FATAL logged
+
+**Scenario 0.3.3: Decrease Log Level to Error**
+- Given: Currently logging at Warn level
+- When: `PUT /api/config/general { MinimumLogLevel: "Error" }`
+- Then: Returns 200 with response `{ success: true, requiresRestart: false }`
+- And: Only ERROR and FATAL messages logged; WARN and INFO filtered
+
+**Scenario 0.3.4: Set to Fatal Only**
+- Given: Currently at Error level
+- When: `PUT /api/config/general { MinimumLogLevel: "Fatal" }`
+- Then: Returns 200; Only system-critical FATAL-level messages logged
+- And: DEBUG, INFO, WARN, ERROR all filtered
+
+**Scenario 0.3.5: Invalid Log Level**
+- Given: Current config at Info level
+- When: `PUT /api/config/general { MinimumLogLevel: "Debug" }`
+- Then: Returns 422 Validation Error with message "MinimumLogLevel must be one of: Info, Warn, Error, Fatal"
+- And: Configuration unchanged, logging continues at Info level
+
+**Scenario 0.3.6: Case Insensitivity**
+- Given: Current config at Info level
+- When: `PUT /api/config/general { MinimumLogLevel: "warn" }` (lowercase)
+- Then: Returns 200; MinimumLogLevel set to "Warn"
+- And: WARN level messages begin logging immediately
+
+**Scenario 0.3.7: Log Level Applied to Console Output**
+- Given: MinimumLogLevel set to "Error"
+- When: Index loading succeeds (INFO-level event)
+- Then: No message appears in console
+- When: Index loading fails (ERROR-level event)
+- Then: Error message appears in console immediately
+
+**Scenario 0.3.8: Log Level Applied to File Output**
+- Given: MinimumLogLevel set to "Error"
+- When: Various operations occur (INFO, WARN, ERROR, FATAL)
+- Then: Inspect `logs/dataserver-{yyyyMMdd}.jsonl` file
+- And: Only ERROR and FATAL entries present; INFO and WARN entries absent
+
+**Scenario 0.3.9: Log Level Change at Runtime (No Message Duplication)**
+- Given: Server logging at Warn level with 100 messages per second
+- When: `PUT /api/config/general { MinimumLogLevel: "Error" }`
+- Then: Returns 200 immediately
+- And: Warn messages stop appearing in output
+- And: No duplicate or missed messages during transition
+- And: All existing Warn messages already logged remain in file
+
+**Scenario 0.3.10: Log Level per Category**
+- Given: Framework ASP.NET Core logs are pinned to Warning (per specification)
+- When: `PUT /api/config/general { MinimumLogLevel: "Info" }`
+- Then: Returns 200
+- And: Custom application logs (Category: Config, Security, Indexing, etc.) appear at Info level
+- And: Framework logs (Microsoft.AspNetCore.*) remain pinned to Warning
+- And: User sees application activity without framework noise
+
+### 0.4 Data Folder Configuration
+
+**SHALL** define the root directory for all data files (indexes, reports, configuration) and validate before use.
+
+| Property | Default | Validation | Requires Restart | Description |
+|----------|---------|------------|:---:|---|
+| **DataFolder** | `DataSource` | Non-empty string; must be writable | **Yes** | Root directory for all persistent data (indexes, reports, config) |
+
+**Scenario 0.4.1: Default Data Folder**
+- Given: `DataFolder` not specified in `appsettings.json`
+- When: Application starts
+- Then: All data files stored in `{workingDirectory}/DataSource/`
+- And: Subdirectories created: `DataSource/reports/`, `DataSource/logs/`
+
+**Scenario 0.4.2: Custom Data Folder via appsettings.json**
+- Given: `appsettings.json` contains `DataServer: { General: { DataFolder: "/var/data/pivot" } }`
+- When: Application starts
+- Then: All data files stored under `/var/data/pivot/`
+- And: Subdirectories created as needed
+
+**Scenario 0.4.3: Relative Path**
+- Given: `DataFolder: "data"`
+- When: Application starts in `/app/` directory
+- Then: Data folder resolves to `/app/data/`
+- And: Subdirectories: `/app/data/reports/`, `/app/data/logs/`
+
+**Scenario 0.4.4: Absolute Path**
+- Given: `DataFolder: "C:\\DataServer"` (Windows) or `/data/pivot` (Linux)
+- When: Application starts
+- Then: Data folder is exactly that path
+- And: Must have write permissions to that directory
+
+**Scenario 0.4.5: Empty DataFolder (Validation Failure)**
+- Given: Configuration update with `DataFolder: ""`
+- When: `PUT /api/config/general { DataFolder: "" }`
+- Then: Returns 422 Validation Error with message "DataFolder cannot be empty"
+- And: Configuration unchanged
+
+**Scenario 0.4.6: DataFolder Does Not Exist (Created at Startup)**
+- Given: `DataFolder: "/new/path/dataserver"` does not exist
+- When: Application starts
+- Then: Directory `/new/path/dataserver/` is created
+- And: All required subdirectories created
+
+**Scenario 0.4.7: DataFolder Exists (No Override)**
+- Given: `DataFolder: "/existing/path/"` already contains files
+- When: Application starts
+- Then: Existing directory and files preserved
+- And: New data stored in same directory (merged)
+
+**Scenario 0.4.8: No Write Permission to DataFolder (Startup Failure)**
+- Given: `DataFolder: "/readonly/"` exists but user lacks write permission
+- When: Application attempts to start
+- Then: Startup fails with error "Access denied to DataFolder: /readonly/"
+- And: Application exits with non-zero code
+- And: Error logged to console
+
+**Scenario 0.4.9: DataFolder Update Requires Restart**
+- Given: Currently using `DataFolder: "DataSource"`
+- When: `PUT /api/config/general { DataFolder: "NewDataFolder" }`
+- Then: Returns 200 with response `{ success: true, requiresRestart: true, message: "DataFolder change requires server restart" }`
+- And: New folder is **not** used until restart
+
+**Scenario 0.4.10: Path Traversal Protection**
+- Given: Configuration update attempted
+- When: `PUT /api/config/general { DataFolder: "../../" }`
+- Then: Returns 422 Validation Error with message "DataFolder path traversal not allowed"
+- And: Configuration unchanged
+
+### 0.5 General Settings API Endpoints
+
+**SHALL** expose General Settings via dedicated REST endpoints with full CRUD semantics.
+
+**Scenario 0.5.1: Get General Settings**
+- Given: Server running
+- When: `GET /api/config/general`
+- Then: Returns 200 with JSON:
+```json
+{
+  "port": 5285,
+  "minimumLogLevel": "Info",
+  "dataFolder": "DataSource",
+  "requiresRestart": false
+}
+```
+
+**Scenario 0.5.2: Update General Settings (Single Property)**
+- Given: Current settings with Port: 5285
+- When: `PUT /api/config/general { minimumLogLevel: "Error" }`
+- Then: Returns 200 with updated settings
+- And: Port remains 5285 (not overwritten)
+
+**Scenario 0.5.3: Update General Settings (Multiple Properties)**
+- Given: Current settings
+- When: `PUT /api/config/general { port: 5286, minimumLogLevel: "Warn", dataFolder: "data" }`
+- Then: Returns 200 with all properties updated
+- And: Response indicates `requiresRestart: true` (because Port and DataFolder require restart)
+
+**Scenario 0.5.4: Patch vs Replace Semantics**
+- Given: Current settings with 3 properties
+- When: `PUT /api/config/general { minimumLogLevel: "Error" }`
+- Then: Returns 200 with **merge patch** semantics (other properties preserved)
+- And: Not treated as full replacement (which would null other properties)
+
+### 0.6 Validation Rules Summary
+
+| Rule | Check | Error Code | Message |
+|------|-------|-----------|---------|
+| Port range | 1–65535 | 422 | "Port must be between 1 and 65535" |
+| Port in use | Address not bound | Fatal | "Address already in use (port XXXX)" |
+| Log level enum | Info \| Warn \| Error \| Fatal | 422 | "MinimumLogLevel must be one of: Info, Warn, Error, Fatal" |
+| DataFolder not empty | string.IsNullOrWhiteSpace | 422 | "DataFolder cannot be empty" |
+| DataFolder writable | Has write permission | Fatal | "Access denied to DataFolder: {path}" |
+| DataFolder no traversal | No `../` or `..\\` | 422 | "DataFolder path traversal not allowed" |
+
+### 0.7 Persistence and Hot-Reload
+
+**SHALL** persist General Settings to `config.json` and support hot-reload (no restart for runtime-applicable settings).
+
+**Scenario 0.7.1: Persistence to config.json**
+- Given: `PUT /api/config/general { minimumLogLevel: "Error" }`
+- When: Returns 200
+- Then: Value persisted to `DataServer/config.json`
+- And: Format is valid JSON
+- And: Survives application restart
+
+**Scenario 0.7.2: Atomic File Write**
+- Given: Server running normally
+- When: Configuration update received
+- Then: Configuration written to temporary file first
+- And: Then atomically renamed to `config.json` (no corruption on partial write)
+
+**Scenario 0.7.3: Hot-Reload for RuntimeApplicable Settings**
+- Given: MinimumLogLevel at Info
+- When: External process updates `DataServer/config.json` to `"Error"`
+- Then: File watcher detects change
+- And: MinimumLogLevel applied immediately (within 100ms)
+- And: No restart required
+
+**Scenario 0.7.4: Corrupt config.json Recovery**
+- Given: `config.json` is malformed JSON
+- When: Application starts
+- Then: Corrupt file renamed to `config.corrupt.{timestamp}`
+- And: Application starts with defaults
+- And: Error logged: "config.json was corrupt; moved to config.corrupt.{timestamp}"
+
+---
+
 ## 1. Index Configuration
 
 ### 1.1 Index Registration from appsettings.json
