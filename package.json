@@ -1,0 +1,12 @@
+{
+  "name": "server-side-pivot-engine-for-pivot-table-tooling",
+  "private": true,
+  "description": "Dev-only tooling (OpenSpec). Not part of the .NET build or publish.",
+  "scripts": {
+    "spec:list": "openspec list",
+    "spec:validate": "openspec validate --all --strict"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "1.14.3"
+  }
+}
