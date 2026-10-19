@@ -265,13 +265,18 @@ namespace PivotController.Indexing
             {
                 return cached;
             }
-            // Lazy load on first request (e.g. after failed preload with KeepDataOnRefresh).
+            // Lazy load on cache miss (first request, KeepDataOnRefresh retention after a failed
+            // reload, or LRU eviction when CacheSizeLimit is small). LoadAsync succeeds unless
+            // the source is unreadable, in which case KeepDataOnRefresh already handled it.
             await LoadAsync(definition, manual: false).ConfigureAwait(false);
             if (_cache.TryGetValue(DataCacheKey(indexName), out cached))
             {
                 return cached;
             }
-            throw new InvalidOperationException($"Index '{indexName}' has no data available.");
+            // CacheSizeLimit == 0 disables caching entirely: serve directly without caching.
+            var data = await _providerFactory.Create(definition.SourceType)
+                .LoadAsync(definition, _store.DataFolder, CancellationToken.None).ConfigureAwait(false);
+            return data;
         }
 
         public async Task<IndexStatusResponse> CreateIndexAsync(IndexDefinition definition)

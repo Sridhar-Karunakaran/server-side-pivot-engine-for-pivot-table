@@ -83,6 +83,9 @@ var app = builder.Build();
 // Bootstrap: ensure data folder structure (spec §1.4) and register indexes.
 var generalService = app.Services.GetRequiredService<GeneralSettingsService>();
 generalService.EnsureDataFolders();
+// Load persisted DataStorage settings (datastorage.json) so restart-required changes
+// (CacheSizeLimit / MaxCacheItemSizeBytes) actually apply after a restart.
+app.Services.GetRequiredService<PivotController.Configuration.Services.DataStorageSettingsService>().LoadPersisted();
 
 // Bootstrap: register indexes from appsettings.json and DataServer/indexes.json, preload enabled ones.
 var indexManager = app.Services.GetRequiredService<IIndexManager>();

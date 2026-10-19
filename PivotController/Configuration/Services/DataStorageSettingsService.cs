@@ -97,6 +97,30 @@ namespace PivotController.Configuration.Services
             return (Current, requiresRestart, errors);
         }
 
+        /// <summary>
+        /// Bootstrap: loads persisted settings from {DataFolder}/datastorage.json so that
+        /// "requires restart" changes (CacheSizeLimit/MaxCacheItemSizeBytes) actually take
+        /// effect after a restart. appsettings values are defaults; the persisted file wins.
+        /// </summary>
+        public void LoadPersisted()
+        {
+            lock (_sync)
+            {
+                var persisted = _store.Load<DataStorageSettings>(SettingsFilePath, new DataStorageSettings());
+                var errors = persisted.Validate();
+                if (errors.Count > 0)
+                {
+                    _logger.LogWarning("Persisted datastorage.json invalid ({Errors}); appsettings defaults kept.", string.Join("; ", errors));
+                    return;
+                }
+                _settings.RetryAttempts = persisted.RetryAttempts;
+                _settings.CacheSizeLimit = persisted.CacheSizeLimit;
+                _settings.KeepDataOnRefresh = persisted.KeepDataOnRefresh;
+                _settings.MaxCacheItemSizeBytes = persisted.MaxCacheItemSizeBytes;
+                _logger.LogInformation("DataStorage settings loaded from {Path}.", SettingsFilePath);
+            }
+        }
+
         private void PersistNoLock()
         {
             _store.Save(SettingsFilePath, Current);
