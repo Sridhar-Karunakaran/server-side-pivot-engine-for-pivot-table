@@ -36,6 +36,7 @@ builder.Logging.AddProvider(minimumLevelProvider);
 builder.Services.AddSingleton(minimumLevelProvider);
 builder.Services.AddSingleton<GeneralSettingsService>();
 builder.Services.AddHostedService<GeneralSettingsFileWatcher>();
+builder.Services.AddSingleton<PivotController.Configuration.Services.DataStorageSettingsService>();
 // Kestrel binds the configured General:Port (spec §1.2). General:Port takes precedence
 // over the `urls` key (launchSettings applicationUrl would otherwise pin the port);
 // only an explicit ASPNETCORE_URLS environment variable overrides it.
@@ -43,6 +44,17 @@ if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
 {
     builder.WebHost.UseUrls($"http://0.0.0.0:{generalSettings.Port}");
 }
+
+// Data storage settings (Step 3): retry, cache size limit, keep-data-on-refresh, item size.
+var dataStorageSettings = builder.Configuration.GetSection(PivotController.Configuration.Models.DataStorageSettings.SectionName)
+    .Get<PivotController.Configuration.Models.DataStorageSettings>() ?? new PivotController.Configuration.Models.DataStorageSettings();
+var dataStorageValidation = dataStorageSettings.Validate();
+if (dataStorageValidation.Count > 0)
+{
+    Console.Error.WriteLine("Invalid DataStorage settings: " + string.Join("; ", dataStorageValidation));
+    Environment.Exit(1);
+}
+builder.Services.AddSingleton(dataStorageSettings);
 
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
@@ -60,9 +72,10 @@ builder.Services.AddCors(options =>
         builder.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
     });
 });
+// Cache size limit from DataStorage:CacheSizeLimit (spec §2.3). 0 disables caching.
 builder.Services.AddMemoryCache((options) =>
 {
-    options.SizeLimit = 100;
+    options.SizeLimit = dataStorageSettings.CacheSizeLimit == 0 ? null : dataStorageSettings.CacheSizeLimit;
 });
 
 var app = builder.Build();

@@ -34,6 +34,7 @@ namespace PivotController.Indexing
         private readonly IDataSourceProviderFactory _providerFactory;
         private readonly IndexStore _store;
         private readonly DataServerSettings _settings;
+        private readonly PivotController.Configuration.Models.DataStorageSettings _dataStorage;
         private readonly ILogger<IndexManager> _logger;
 
         private readonly ConcurrentDictionary<string, IndexDefinition> _indexes = new(StringComparer.OrdinalIgnoreCase);
@@ -42,12 +43,14 @@ namespace PivotController.Indexing
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _engineLocks = new(StringComparer.OrdinalIgnoreCase);
 
         public IndexManager(IMemoryCache cache, IDataSourceProviderFactory providerFactory, IndexStore store,
-            DataServerSettings settings, ILogger<IndexManager> logger)
+            DataServerSettings settings, PivotController.Configuration.Models.DataStorageSettings dataStorage,
+            ILogger<IndexManager> logger)
         {
             _cache = cache;
             _providerFactory = providerFactory;
             _store = store;
             _settings = settings;
+            _dataStorage = dataStorage;
             _logger = logger;
         }
 
@@ -407,14 +410,24 @@ namespace PivotController.Indexing
             {
                 SetStatus(definition.Index, IndexStatus.Refreshing, CurrentRowCount(definition.Index), null, null);
                 Exception? lastError = null;
-                for (int attempt = 0; attempt <= _settings.RetryAttempts; attempt++)
+                for (int attempt = 0; attempt <= _dataStorage.RetryAttempts; attempt++)
                 {
                     try
                     {
                         var provider = _providerFactory.Create(definition.SourceType);
                         var data = await provider.LoadAsync(definition, _store.DataFolder, CancellationToken.None).ConfigureAwait(false);
-                        _cache.Set(DataCacheKey(definition.Index), data,
-                            new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = DateTimeOffset.UtcNow.AddDays(7) });
+                        if (_dataStorage.CacheSizeLimit > 0 && _dataStorage.MaxCacheItemSizeBytes > 0 && EstimateSize(data) > _dataStorage.MaxCacheItemSizeBytes)
+                        {
+                            // Per-item limit (spec §2.5.2): oversize data is not cached; loaded per request.
+                            _cache.Remove(DataCacheKey(definition.Index));
+                            _logger.LogWarning("Index '{Index}' data exceeds MaxCacheItemSizeBytes ({Bytes}); not cached.",
+                                definition.Index, _dataStorage.MaxCacheItemSizeBytes);
+                        }
+                        else
+                        {
+                            _cache.Set(DataCacheKey(definition.Index), data,
+                                new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = DateTimeOffset.UtcNow.AddDays(7) });
+                        }
                         var status = SetStatus(definition.Index, IndexStatus.Ready, data.Count, DateTime.UtcNow, null);
                         _logger.LogInformation("Index '{Index}' loaded {RowCount} rows ({Mode}).",
                             definition.Index, data.Count, manual ? "manual" : "auto/bootstrap");
@@ -423,7 +436,7 @@ namespace PivotController.Indexing
                     catch (Exception ex) when (ex is IOException or TimeoutException or Newtonsoft.Json.JsonException or InvalidDataException)
                     {
                         lastError = ex;
-                        if (attempt < _settings.RetryAttempts)
+                        if (attempt < _dataStorage.RetryAttempts)
                         {
                             var delay = TimeSpan.FromMilliseconds(250 * Math.Pow(2, attempt) * (0.8 + Random.Shared.NextDouble() * 0.4));
                             await Task.Delay(delay).ConfigureAwait(false);
@@ -434,7 +447,7 @@ namespace PivotController.Indexing
             }
             catch (Exception ex)
             {
-                if (_settings.KeepDataOnRefresh && _cache.TryGetValue(DataCacheKey(definition.Index), out List<ExpandoObject> old))
+                if (_dataStorage.KeepDataOnRefresh && _cache.TryGetValue(DataCacheKey(definition.Index), out List<ExpandoObject> old))
                 {
                     var status = SetStatus(definition.Index, IndexStatus.Ready, old.Count, GetIndexStatus(definition.Index).LoadedAt, ex.Message);
                     _logger.LogWarning("Index '{Index}' reload failed; serving cached data ({RowCount} rows): {Error}",
@@ -449,6 +462,24 @@ namespace PivotController.Indexing
             {
                 gate.Release();
             }
+        }
+
+        /// <summary>Rough in-memory size estimate of an index dataset (spec §2.5).</summary>
+        private static long EstimateSize(List<ExpandoObject> data)
+        {
+            long total = 64; // list overhead
+            foreach (var row in data)
+            {
+                total += 64; // ExpandoObject overhead
+                var dict = (IDictionary<string, object?>)row;
+                foreach (var key in dict.Keys)
+                {
+                    total += 2 * key.Length + 8;
+                    if (dict[key] is string s) { total += s.Length * 2; }
+                    else { total += 16; }
+                }
+            }
+            return total;
         }
 
         private int CurrentRowCount(string indexName)
