@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8" />
-    <title>Pivot Data Server — Steps 1 + 2 + 3 Demo</title>
+    <title>Pivot Table — Syncfusion Data Server (Server Mode)</title>
     <link href="https://cdn.syncfusion.com/ej2/21.1.35/material.css" rel="stylesheet" />
     <script src="https://cdn.syncfusion.com/ej2/ej2-base.min.js"></script>
     <script src="https://cdn.syncfusion.com/ej2/ej2-data.min.js"></script>
@@ -13,233 +13,50 @@
     <script src="https://cdn.syncfusion.com/ej2/ej2-pivotview.min.js"></script>
     <style>
         body { font-family: 'Segoe UI', sans-serif; margin: 24px; background: #fafafa; }
-        h1 { font-size: 22px; } h2 { font-size: 16px; margin-top: 28px; }
-        .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin: 8px 0; }
-        table { border-collapse: collapse; font-size: 13px; }
-        td, th { border: 1px solid #ddd; padding: 4px 10px; text-align: left; }
-        th { background: #f5f5f5; }
-        button { padding: 6px 14px; margin: 2px; cursor: pointer; }
-        input, select { padding: 4px; }
-        pre { background: #263238; color: #eeffff; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 12px; max-height: 260px; }
-        .ok { color: #2e7d32; font-weight: 600; } .err { color: #c62828; font-weight: 600; }
-        #PivotSales-Json, #PivotData-Csv { height: 320px; margin-top: 8px; }
-        .pivot-section { background: #fff; border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin: 10px 0; }
-        label { display: inline-block; min-width: 150px; }
+        h1 { font-size: 22px; font-weight: 600; }
+        p.note { color: #555; max-width: 860px; }
+        .pivot-section { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+                          padding: 14px; margin: 14px 0; }
+        .pivot-section h2 { font-size: 15px; margin: 0 0 10px 0; color: #333; }
+        .pivot-section .meta { font-size: 12px; color: #777; margin-bottom: 8px; }
+        #PivotSales-Json, #PivotData-Csv { height: 350px; }
     </style>
 </head>
 <body>
-    <h1>Pivot Data Server — Demo (Steps 1 + 2 + 3)</h1>
-    <p>Served by the Data Server through the public tunnel. The pivot tables below render <b>live</b> from the server's indexed data via <code>/api/pivot/post</code>.</p>
+    <h1>Pivot Table — Server Mode via Syncfusion Data Server</h1>
+    <p class="note">
+        Both grids run in <b>Server mode</b>: all pivot calculations, aggregation, filtering and
+        sorting are executed by the Data Server's index-aware pivot engine
+        (<code>/api/pivot/post</code>). Only the viewport data is transferred to the browser —
+        the raw data source never leaves the server.
+    </p>
 
-    <!-- STEP 1 -->
-    <h2>Step 1 — Index Configuration</h2>
-    <div class="card">
-        <button onclick="loadStatus()">List indexes (GET /api/indexes)</button>
-        <button onclick="op('reload')">Reload Sales-Json</button>
-        <button onclick="op('disable')">Disable Sales-Json</button>
-        <button onclick="op('enable')">Enable Sales-Json</button>
-        <button onclick="fieldmap()">Field mapping: Price→String / Date→Date (Data-Csv)</button>
-        <button onclick="fieldlist()">List Data-Csv fields</button>
-        <div id="status"></div>
-        <pre id="statusOut">Click a button…</pre>
-    </div>
-
-    <!-- STEP 2 -->
-    <h2>Step 2 — General Settings</h2>
-    <div class="card">
-        <label>MinimumLogLevel</label>
-        <select id="logLevel">
-            <option>Info</option><option>Warn</option><option>Error</option><option>Fatal</option>
-        </select>
-        <button onclick="setLogLevel()">Apply (PUT /api/config/general)</button>
-        <button onclick="getGeneral()">Get current settings</button>
-        <button onclick="testLog()">Emit test logs (console output on server)</button>
-        <div>
-            <label>Port</label><input id="portInput" placeholder="e.g. 5286" size="8" />
-            <button onclick="setPort()">Change port (requiresRestart)</button>
-        </div>
-        <pre id="generalOut">Current general settings not loaded.</pre>
-    </div>
-
-    <!-- STEP 3 -->
-    <h2>Step 3 — Data Storage Settings</h2>
-    <div class="card">
-        <label>RetryAttempts (0–30)</label><input id="retryInput" value="3" size="6" />
-        <label>CacheSizeLimit</label><input id="cacheInput" value="100" size="6" />
-        <label>KeepDataOnRefresh</label>
-        <select id="keepSelect"><option value="true">true</option><option value="false">false</option></select>
-        <label>MaxCacheItemSizeBytes</label><input id="itemSizeInput" value="0" size="10" />
-        <br />
-        <button onclick="putDataStorage()">Apply (PUT /api/config/datastorage)</button>
-        <button onclick="getDataStorage()">Get current settings</button>
-        <button onclick="testKeepData()">Test KeepDataOnRefresh (reloads with missing source)</button>
-        <button onclick="loadCacheStats()">Cache stats (cached vs evicted)</button>
-        <pre id="dsOut">Current data storage settings not loaded.</pre>
-    </div>
-
-    <div class="card">
-        <b>Cache limit visualizer</b> — GET /api/config/datastorage/cache-stats.
-        With CacheSizeLimit below the number of loaded indexes you can watch LRU eviction:
-        entries move from <i>cachedIndexes</i> to <i>evictedIndexes</i>, and pivoting an
-        evicted index still returns 200 (transparent disk reload).
-        <div id="cacheStats" style="margin-top:8px"></div>
-    </div>
-
-    <div class="card">
-        <b>RetryAttempts demo</b> — creates an index pointing at a missing file;
-        the server console logs each retry with its backoff delay.
-        <button onclick="testRetry(1)">Create with retryAttempts=1</button>
-        <button onclick="testRetry(5)">Create with retryAttempts=5 (~8s)</button>
-        <pre id="retryOut">Watch the server console for "load attempt n/N failed ... Retrying in X ms" lines.</pre>
-    </div>
-
-    <!-- CLIENT-SIDE PIVOT TABLES -->
-    <h2>Client-side Pivot Tables (connected to the Data Server)</h2>
     <div class="pivot-section">
-        <b>Sales-Json index</b> — JSON data source
+        <h2>Sales Analysis — JSON index</h2>
+        <div class="meta">index: <code>Sales-Json</code> · source: sales-analysis.json · server-side engine with virtual scrolling</div>
         <div id="PivotSales-Json"></div>
     </div>
+
     <div class="pivot-section">
-        <b>Data-Csv index</b> — CSV data source (server-side engine, virtual scrolling)
+        <h2>Product Sales — CSV index</h2>
+        <div class="meta">index: <code>Data-Csv</code> · source: data.csv · server-side engine with virtual scrolling</div>
         <div id="PivotData-Csv"></div>
     </div>
 
     <script>
         var API = window.location.origin;
-        var log = function (el, label, res) {
-            document.getElementById(el).textContent = label + '\n' + res;
-        };
-        var json = function (r) { return JSON.stringify(r, null, 2).slice(0, 2500); };
 
-        // ---------- STEP 1 ----------
-        function loadStatus() {
-            fetch(API + '/api/indexes').then(r => r.json()).then(d => {
-                document.getElementById('status').innerHTML = '<table><tr><th>Index</th><th>Status</th><th>Rows</th></tr>' +
-                    d.map(i => '<tr><td>' + i.index + '</td><td>' + i.status + '</td><td>' + i.rowCount + '</td></tr>').join('') + '</table>';
-            });
-        }
-        function op(action) {
-            fetch(API + '/api/indexes/Sales-Json/' + action, { method: 'POST' })
-                .then(r => r.json()).then(d => log('statusOut', action + ' →', json(d)));
-        }
-        function fieldmap() {
-            fetch(API + '/api/indexes/Data-Csv/fields/Price', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"type":"String"}' })
-                .then(r => r.text()).then(t => log('statusOut', 'PUT fields/Price type=String →', t));
-        }
-        function fieldlist() {
-            fetch(API + '/api/indexes/Data-Csv/fields').then(r => r.json()).then(d => {
-                document.getElementById('status').innerHTML = '<table><tr><th>Field</th><th>Detected</th><th>Mapped</th><th>Effective</th></tr>' +
-                    d.map(f => '<tr><td>' + f.fieldName + '</td><td>' + f.detectedType + '</td><td>' + (f.mappedType || '—') + '</td><td>' + f.effectiveType + '</td></tr>').join('') + '</table>';
-            });
-        }
-
-        // ---------- STEP 2 ----------
-        function getGeneral() {
-            fetch(API + '/api/config/general').then(r => r.json())
-                .then(d => document.getElementById('generalOut').textContent = json(d));
-        }
-        function setLogLevel() {
-            var v = document.getElementById('logLevel').value;
-            fetch(API + '/api/config/general', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"minimumLogLevel":"' + v + '"}' })
-                .then(r => r.json()).then(d => document.getElementById('generalOut').textContent = 'minimumLogLevel=' + v + '\n' + json(d));
-        }
-        function setPort() {
-            var v = parseInt(document.getElementById('portInput').value || '5286', 10);
-            fetch(API + '/api/config/general', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{"port":' + v + '}' })
-                .then(r => r.json()).then(d => document.getElementById('generalOut').textContent = 'port=' + v + ' →\n' + json(d));
-        }
-        function testLog() {
-            fetch(API + '/api/config/general/test-log', { method: 'POST' })
-                .then(r => r.json()).then(d => document.getElementById('generalOut').textContent =
-                    'Emitted log entries. Watch the server console: entries below MinimumLogLevel are suppressed.\n\n' + json(d));
-        }
-
-        // ---------- STEP 3 ----------
-        function getDataStorage() {
-            fetch(API + '/api/config/datastorage').then(r => r.json())
-                .then(d => document.getElementById('dsOut').textContent = json(d));
-        }
-        function putDataStorage() {
-            var body = {
-                retryAttempts: parseInt(document.getElementById('retryInput').value, 10),
-                cacheSizeLimit: parseInt(document.getElementById('cacheInput').value, 10),
-                keepDataOnRefresh: document.getElementById('keepSelect').value === 'true',
-                maxCacheItemSizeBytes: parseInt(document.getElementById('itemSizeInput').value, 10)
-            };
-            fetch(API + '/api/config/datastorage', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-                .then(r => r.json()).then(d => document.getElementById('dsOut').textContent = 'PUT →\n' + json(d));
-        }
-        function testKeepData() {
-            // Trigger a reload of Sales-Json: server applies KeepDataOnRefresh semantics.
-            fetch(API + '/api/indexes/Sales-Json/reload', { method: 'POST' })
-                .then(r => r.json()).then(d => document.getElementById('dsOut').textContent =
-                    'Reload response (502 means reload failed; with KeepDataOnRefresh=true the cached data keeps serving):\n' + json(d));
-        }
-        function loadCacheStats() {
-            fetch(API + '/api/config/datastorage/cache-stats').then(r => r.json()).then(s => {
-                document.getElementById('cacheStats').innerHTML =
-                    '<table><tr><th>Limit</th><th>Cached</th><th>Cached indexes</th><th>Evicted (LRU)</th></tr>' +
-                    '<tr><td>' + s.cacheSizeLimit + '</td><td>' + s.cachedCount + '</td><td>' +
-                    s.cachedIndexes.join(', ') + '</td><td>' + (s.evictedIndexes.length ? s.evictedIndexes.join(', ') : '—') +
-                    '</td></tr></table>';
-                document.getElementById('dsOut').textContent = 'cache-stats →\n' + json(s);
-            });
-        }
-        function testRetry(attempts) {
-            fetch(API + '/api/config/datastorage', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                body: '{"retryAttempts":' + attempts + '}' })
-            .then(() => fetch(API + '/api/indexes', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: '{"index":"Retry-Demo","sourceType":"Csv","sourcePath":"no-such-file.csv"}' }))
-            .then(r => r.json().then(d => ({ code: r.status, body: d })))
-            .then(x => {
-                document.getElementById('retryOut').textContent =
-                    'POST /api/indexes (missing source) → HTTP ' + x.code + '\n' +
-                    'Server console now shows ' + attempts + ' retry attempts with exponential backoff.\n\n' + json(x.body);
-                fetch(API + '/api/indexes/Retry-Demo', { method: 'DELETE' });
-                fetch(API + '/api/config/datastorage', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                    body: '{"retryAttempts":' + document.getElementById('retryInput').value + '}' });
-            });
-        }
-
-        // ---------- PIVOT TABLES ----------
-        ej.base.enableRipple(false);
-        function makePivot(elementId, indexName, rows, cols, vals) {
-            var pivot = new ej.pivotview.PivotView({
-                dataSourceSettings: {
-                    url: API + '/api/pivot/post',
-                    mode: 'Server',
-                    type: 'JSON',
-                    enableSorting: true,
-                    expandAll: false,
-                    rows: rows,
-                    columns: cols,
-                    values: vals
-                },
-                // Server-mode engine keys off the request hash; append the index so each
-                // table routes to its own index's engine cache.
-                beforeRender: function (args) { args.customProperties = args.customProperties || {}; },
-                enableVirtualization: true,
-                showGroupingBar: true,
-                showFieldList: true,
-                height: 320
-            });
-            // Route every request to this index by injecting the index into the payload.
-            var origFetch = window.fetch;
-            // The pivot engine posts to the url with the report payload; we add `index`.
-            pivot.appendTo('#' + elementId);
-            return pivot;
-        }
-
-        // Because the server reads `index` from the request body, we patch fetch so each
-        // pivot grid targets its own index.
-        var pendingIndex = null;
+        // Route every pivot request to its index: the Data Server picks the
+        // index-aware engine cache per request body `index` field.
+        var currentPivotIndex = null;
         var realFetch = window.fetch;
         window.fetch = function (input, init) {
-            if (pendingIndex && init && init.body && typeof init.body === 'string' && init.body.indexOf('dataSourceSettings') > -1) {
+            if (currentPivotIndex && init && init.body && typeof init.body === 'string'
+                && init.body.indexOf('dataSourceSettings') > -1) {
                 try {
                     var parsed = JSON.parse(init.body);
                     if (parsed.dataSourceSettings) {
-                        parsed.index = pendingIndex;
+                        parsed.index = currentPivotIndex;
                         init.body = JSON.stringify(parsed);
                     }
                 } catch (e) { /* not a pivot payload */ }
@@ -247,31 +64,53 @@
             return realFetch.apply(this, arguments);
         };
 
-        pendingIndex = 'Sales-Json';
+        ej.base.enableRipple(false);
+
+        currentPivotIndex = 'Sales-Json';
         new ej.pivotview.PivotView({
             dataSourceSettings: {
-                url: API + '/api/pivot/post', mode: 'Server', type: 'JSON', enableSorting: true,
+                url: API + '/api/pivot/post',
+                mode: 'Server',
+                type: 'JSON',
+                enableSorting: true,
+                expandAll: false,
                 rows: [{ name: 'Sector', caption: 'Sector' }],
                 columns: [{ name: 'EnerType', caption: 'Energy Type' }],
-                values: [{ name: 'PowUnits', caption: 'Power Units' }, { name: 'ProCost', caption: 'Cost' }]
+                values: [
+                    { name: 'PowUnits', caption: 'Power Units' },
+                    { name: 'ProCost', caption: 'Cost' }
+                ]
             },
-            enableVirtualization: true, showGroupingBar: true, showFieldList: true, height: 320
+            enableVirtualization: true,
+            enableValueSorting: true,
+            showGroupingBar: true,
+            showFieldList: true,
+            height: 350
         }).appendTo('#PivotSales-Json');
 
-        pendingIndex = 'Data-Csv';
+        currentPivotIndex = 'Data-Csv';
         new ej.pivotview.PivotView({
             dataSourceSettings: {
-                url: API + '/api/pivot/post', mode: 'Server', type: 'CSV', enableSorting: true,
+                url: API + '/api/pivot/post',
+                mode: 'Server',
+                type: 'CSV',
+                enableSorting: true,
+                expandAll: false,
                 rows: [{ name: 'Country', caption: 'Country' }],
                 columns: [{ name: 'Category', caption: 'Category' }],
-                values: [{ name: 'Price', caption: 'Price' }, { name: 'Quantity', caption: 'Quantity' }]
+                values: [
+                    { name: 'Price', caption: 'Price' },
+                    { name: 'Quantity', caption: 'Quantity' }
+                ]
             },
-            enableVirtualization: true, showGroupingBar: true, showFieldList: true, height: 320
+            enableVirtualization: true,
+            enableValueSorting: true,
+            showGroupingBar: true,
+            showFieldList: true,
+            height: 350
         }).appendTo('#PivotData-Csv');
-        pendingIndex = null;
 
-        // initial loads
-        loadStatus(); getGeneral(); getDataStorage(); loadCacheStats();
+        currentPivotIndex = null;
     </script>
 </body>
 </html>
