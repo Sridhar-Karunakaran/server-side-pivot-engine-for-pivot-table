@@ -1,696 +1,869 @@
-# Custom Data Server - Implementation Tasks
+# Syncfusion Pivot Data Server — Phase 1 Implementation Tasks
 
 **Date:** 2024-12-19
 
-**Status:** Pending Specification Approval
+**Status:** Ready for Implementation
+
+---
 
 ## Overview
 
-This document outlines the implementation tasks for the Custom Data Server feature. Tasks are organized by component and include verification criteria based on requirements in the specification and evidence from EXPLORATION.md.
+This document outlines the 40+ implementation tasks organized into 8 phases corresponding to the specification sections. Each task includes acceptance criteria mapped to testable requirements (spec.md) and verification steps.
 
-## Task Execution Rules
+**Prerequisites:**
+- All specification documents approved (EXPLORATION, proposal, design, spec.md)
+- OpenSpec status updated to "approved"
+- No implementation begins until this document is reviewed and signed off
 
-- [ ] Start implementation only after specification is approved
-- [ ] Complete tasks in sequence by component
-- [ ] Verify each task against specification scenarios
-- [ ] Maintain backward compatibility with existing pivot endpoint
-- [ ] Run sample applications after implementation to validate integration
-- [ ] Document any deviations from specification with rationale
+---
 
-## Phase 1: Foundation Components
+## Phase 1: Index Configuration (Step 1 — Foundational)
 
-### Task 1.1: Create Configuration Service Infrastructure
+*Estimated: 3-4 days*
 
-**Objective:** Implement base configuration service with dependency injection setup.
+This phase is critical; all subsequent features depend on named indexes and IndexManager.
 
-**Subtasks:**
-- [ ] Create namespace `PivotController.DataServer.Configuration`
-- [ ] Implement `ICustomDataServerConfiguration` interface
-- [ ] Create concrete `CustomDataServerConfiguration` class
-- [ ] Implement configuration loading from `appsettings.json`
-- [ ] Add validation logic with clear error messages
-- [ ] Register service in `Program.cs` as singleton
-- [ ] Create unit tests for configuration validation
+### 1.1 Create IndexDefinition Model
 
-**Verification:**
-- [ ] Configuration loads from file without errors
-- [ ] Invalid configurations throw validation errors with helpful messages
-- [ ] Service is injectable in PivotController
-- [ ] All 6 configuration categories are accessible through service
-
-**Affected Files:**
-- `PivotController/DataServer/Configuration/ICustomDataServerConfiguration.cs` (new)
-- `PivotController/DataServer/Configuration/CustomDataServerConfiguration.cs` (new)
-- `PivotController/DataServer/Configuration/Models/GeneralSettings.cs` (new)
-- `PivotController/DataServer/Configuration/Models/DataStorageSettings.cs` (new)
-- `PivotController/DataServer/Configuration/Models/DatabaseQuerySettings.cs` (new)
-- `PivotController/DataServer/Configuration/Models/HttpsSettings.cs` (new)
-- `PivotController/DataServer/Configuration/Models/SecuritySettings.cs` (new)
-- `PivotController/DataServer/Configuration/Models/ReportSharingSettings.cs` (new)
-- `PivotController/Program.cs` (modified - add service registration)
-- `PivotController/appsettings.json` (modified - add Custom Data Server section)
-
-### Task 1.2: Implement General Settings
-
-**Objective:** Complete implementation of General Settings with all validation and defaults.
+**Objective:** Implement data model for index metadata with validation
 
 **Subtasks:**
-- [ ] Implement `GeneralSettings` class with properties: ServerId, Environment, MaxConcurrentRequests, QueryTimeoutSeconds, MaxResultSetSize
-- [ ] Add default values (MaxConcurrentRequests=100, QueryTimeoutSeconds=30, MaxResultSetSize=1,000,000)
-- [ ] Implement validation: ServerId not empty, MaxConcurrentRequests > 0, QueryTimeoutSeconds > 0
-- [ ] Add configuration examples in `appsettings.Development.json`
-- [ ] Create unit tests for each validation scenario (1.1.1 through 1.1.4 from spec)
+- [ ] Create file: `PivotController/Configuration/Models/IndexDefinition.cs`
+  - Properties: Index, Name, SourceType, SourcePath, CsvDelimiter, CsvDecimalSeparator, CsvThousandsSeparator, DatabaseType, ConnectionStringName, Query, AutoReload, ReloadIntervalMinutes, MappingEnabled, FieldMappings[], Enabled, CreatedAt, UpdatedAt
+  - Validation: Index name pattern `[A-Za-z0-9._-]{1,64}`, SourceType immutable on edit
+- [ ] Create file: `PivotController/Configuration/Models/IndexFieldMapping.cs`
+  - Properties: FieldName, Type (Number | String | Date)
+- [ ] Create file: `PivotController/Configuration/Models/IndexStatus.cs`
+  - Enum: Ready | Refreshing | Failed | Disabled
+  - Include: IndexName, Status, RowCount, LoadedAt, LastError
 
 **Verification:**
-- [ ] Scenario 1.1.1.1: Server ID is loaded and stored correctly
-- [ ] Scenario 1.1.1.2: Server ID appears in logs
-- [ ] Scenario 1.1.2.1 & 1.1.2.2: Concurrency limits are enforced
-- [ ] Scenario 1.1.3.1 & 1.1.3.2: Query timeouts are enforced
-- [ ] Scenario 1.1.4.1 & 1.1.4.2: Result set limits are enforced
+- [ ] Models compile with no warnings
+- [ ] Default values match spec (MappingEnabled=false, AutoReload=false, Enabled=true)
+- [ ] Serialization/deserialization works (JSON round-trip)
 
-**Affected Files:**
-- `PivotController/DataServer/Configuration/Models/GeneralSettings.cs` (new)
-- `PivotController/appsettings.Development.json` (modified)
-- `Tests/GeneralSettingsTests.cs` (new)
+**Specification Mapping:** 1.1, 1.3, 1.5
 
-### Task 1.3: Implement Data Storage Settings
+---
 
-**Objective:** Build data source configuration and management for multiple sources.
+### 1.2 Implement IndexManager (Core Cache Hub)
+
+**Objective:** Central service for index data management and cache coordination
 
 **Subtasks:**
-- [ ] Implement `DataSourceConfiguration` class with Name, Type, ConnectionSettings, IsPrimary, FailoverSources
-- [ ] Implement `DataStorageSettings` class managing source collection
-- [ ] Add validation: exactly one primary source, all names unique, valid types
-- [ ] Implement failover logic: test primary, fall back on failure
-- [ ] Add connection verification method for each source
-- [ ] Create unit tests for scenarios 1.2.1.1 through 1.2.1.3
+- [ ] Create file: `PivotController/Indexing/IIndexManager.cs` (interface)
+  - Methods: GetDataAsync, CreateIndexAsync, EditIndexAsync, ReloadIndexAsync, EnableIndexAsync, DisableIndexAsync, DeleteIndexAsync, GetIndexStatus, ListIndexes
+- [ ] Create file: `PivotController/Indexing/IndexManager.cs` (implementation)
+  - Dependencies: IMemoryCache, DataServerConfiguration, IDataSourceProviderFactory, ILogger
+  - Per-index SemaphoreSlim for reload protection
+  - Keep-data-on-refresh logic (dual-slot cache entry)
+  - Index registry (_indexes dictionary, case-insensitive)
+- [ ] Create file: `PivotController/Indexing/IndexReloadWorker.cs` (BackgroundService)
+  - Scans indexes with AutoReload=true + ReloadIntervalMinutes>0
+  - Triggers reload at configured intervals from server start
+  - Handles reload failures per KeepDataOnRefresh
 
 **Verification:**
-- [ ] Scenario 1.2.1.1: Primary source is used when available
-- [ ] Scenario 1.2.1.2: Failover occurs when primary fails, failure is logged
-- [ ] Scenario 1.2.1.3: Error occurs when all sources unavailable
-- [ ] Multiple sources can be configured with different types
-- [ ] Connection verification works for each source type
+- [ ] IndexManager injects without DI errors
+- [ ] CreateIndexAsync persists metadata and loads data
+- [ ] Cache keys use `data:{index}` and `engine:{index}:{hash}` format
+- [ ] Concurrent reload protected by SemaphoreSlim (no data corruption)
+- [ ] Keep-data-on-refresh swaps atomically
 
-**Affected Files:**
-- `PivotController/DataServer/Configuration/Models/DataStorageSettings.cs` (new)
-- `PivotController/DataServer/Configuration/Models/DataSourceConfiguration.cs` (new)
-- `PivotController/DataServer/Services/DataSourceVerificationService.cs` (new)
-- `Tests/DataStorageSettingsTests.cs` (new)
+**Specification Mapping:** 1.2, 4.1, 4.2, 4.3
 
-### Task 1.4: Implement Cache Strategy Configuration
+---
 
-**Objective:** Build configurable caching framework supporting multiple strategies.
+### 1.3 Bootstrap Index Configuration from appsettings.json
+
+**Objective:** Load indexes from appsettings.json at startup; one-time legacy migration
 
 **Subtasks:**
-- [ ] Add CacheStrategy enum: None, Memory, Distributed, Hybrid
-- [ ] Implement cache configuration properties: DefaultCacheStrategy, CacheExpirationMinutes
-- [ ] Integrate with existing IMemoryCache
-- [ ] Add configuration validation
-- [ ] Create abstraction for cache service
-- [ ] Implement memory cache strategy
-- [ ] Create unit tests for scenarios 1.2.2.1 through 1.2.2.3
+- [ ] Create file: `PivotController/Configuration/Services/ConfigurationPersistenceService.cs`
+  - LoadAsync() — reads DataServer section from config
+  - SaveAsync() — atomically writes config.json using AtomicJsonStore
+  - EnsureFilesAsync() — creates DataServer directory, initializes missing files
+- [ ] Modify `PivotController/Program.cs`:
+  - Call `ConfigurationPersistenceService.EnsureFilesAsync()`
+  - Load configuration from appsettings.json with defaults
+  - Check for legacy `PivotDataSource` block
+  - If exists: create index "default" from it; save to DataServer/indexes.json
+  - Register all enabled indexes via `IndexManager.RegisterAllAsync()`
+  - Configure cache sizing from `DataStorage.CacheSizeLimit`
+- [ ] Create file: `PivotController/DataServer/.gitignore`
+  - Ignore: `config.json`, `indexes.json`, `users.json`, `reports/`, `logs/`, `*.corrupt.*`
 
 **Verification:**
-- [ ] Scenario 1.2.2.1: Memory cache caches results for configured duration
-- [ ] Scenario 1.2.2.2: Cache expires after configured time
-- [ ] Scenario 1.2.2.3: No cache strategy bypasses caching
-- [ ] Cache expiration works correctly
+- [ ] Application starts; `DataServer/` directory created
+- [ ] Indexes from appsettings.json registered and available via `GET /api/indexes`
+- [ ] Legacy `PivotDataSource` migrated to "default" index (one-time only)
+- [ ] Disabled indexes not preloaded; enabled indexes load successfully
+- [ ] Cache size limit applied (`MemoryCache.Options.SizeLimit` set)
 
-**Affected Files:**
-- `PivotController/DataServer/Configuration/Models/DataStorageSettings.cs` (modified)
-- `PivotController/DataServer/Caching/ICacheService.cs` (new)
-- `PivotController/DataServer/Caching/MemoryCacheService.cs` (new)
-- `Tests/CacheStrategyTests.cs` (new)
+**Specification Mapping:** 1.1, 1.2, 12.1, 12.3
 
-### Task 1.5: Implement Incremental Load Support
+---
 
-**Objective:** Build framework for progressive data loading.
+### 1.4 Index-Aware Pivot Routing
+
+**Objective:** Modify PivotController to route requests via IndexManager using index name
 
 **Subtasks:**
-- [ ] Add EnableIncrementalLoad property to DataStorageSettings
-- [ ] Implement pagination base class
-- [ ] Create DataQueryRequest and DataQueryResponse classes
-- [ ] Add pagination properties to response: PageNumber, PageSize, TotalRowCount
-- [ ] Implement batch loading logic
-- [ ] Create unit tests for scenarios 1.2.3.1 and 1.2.3.2
+- [ ] Modify `FetchData` class (in existing code) to add optional `Index` property
+- [ ] Modify `PivotController/Controllers/PivotController.cs`:
+  - Inject `IIndexManager`
+  - In `Post()` method:
+    - Extract `FetchData.Index` (fallback to `_config.DefaultIndexId`)
+    - Call `_indexManager.GetIndexStatus(indexName)` to validate
+    - Return 404 if not found (list valid indexes)
+    - Return 423 if disabled
+    - Call `_indexManager.GetDataAsync(indexName)` instead of `GetData()`
+  - Prefix cache keys: `engine:{indexName}:{hash}` (use helper method)
+  - All existing pivot actions (fetchFieldMembers, fetchRawData, exports) continue working with index-prefixed data
 
 **Verification:**
-- [ ] Scenario 1.2.3.1: Incremental load returns data in batches
-- [ ] Scenario 1.2.3.2: All data is loaded when incremental disabled
-- [ ] Pagination metadata is correctly calculated
+- [ ] Pivot request with `index` field routes to correct index data
+- [ ] Pivot request without `index` uses `DefaultIndexId` (backward compatible)
+- [ ] Unknown index returns 404 with valid index list
+- [ ] Disabled index returns 423
+- [ ] Existing pivot actions work on routed index data
 
-**Affected Files:**
-- `PivotController/DataServer/Configuration/Models/DataStorageSettings.cs` (modified)
-- `PivotController/DataServer/Models/DataQueryRequest.cs` (new)
-- `PivotController/DataServer/Models/DataQueryResponse.cs` (new)
-- `Tests/IncrementalLoadTests.cs` (new)
+**Specification Mapping:** 2.1, 2.2, 12.1
 
-## Phase 2: Data Adapter Pattern
+---
 
-### Task 2.1: Create Abstract Data Adapter
+### 1.5 Index Management REST APIs
 
-**Objective:** Establish pluggable adapter pattern for data sources.
+**Objective:** Implement full index lifecycle endpoints
 
 **Subtasks:**
-- [ ] Create namespace `PivotController.DataServer.Adapters`
-- [ ] Implement abstract `DataAdapter` base class with methods:
-  - ExecuteQueryAsync(DataQueryRequest) → DataQueryResponse
-  - GetFieldMetadataAsync() → Dictionary<string, string>
-  - VerifyConnectionAsync() → bool
-- [ ] Define async patterns and cancellation token support
-- [ ] Create test fixtures for adapter testing
-- [ ] Write unit tests for scenarios 2.1.1 through 2.1.3
+- [ ] Create file: `PivotController/Configuration/Controllers/IndexController.cs`
+  - `GET /api/indexes` — list all indexes with status
+  - `GET /api/indexes/{index}` — index detail + status (404 if not found)
+  - `POST /api/indexes` — create index (409 if duplicate)
+    - Request: IndexDefinition
+    - Response: 201 `{ index, status, rowCount, loadedAt, lastError }`
+  - `PUT /api/indexes/{index}` — edit index (all except sourceType)
+    - Reject if sourceType changed (422)
+    - Reload data after metadata saved
+    - Response: 200 `{ index, status, rowCount, loadedAt, lastError }`
+  - `POST /api/indexes/{index}/reload` — manual reload
+    - Response: 200 `{ status, rowCount, lastError }` or 502 on failure
+    - Honor KeepDataOnRefresh
+  - `POST /api/indexes/{index}/enable` — enable + load
+    - Response: 200 `{ status, rowCount }`
+  - `POST /api/indexes/{index}/disable` — disable + evict
+    - Response: 200 `{ status: "Disabled" }`
+  - `DELETE /api/indexes/{index}` — delete metadata + evict cache
+    - Response: 204
+  - `POST /api/indexes/{index}/test-connection` — test DB connection (DB indexes only)
+    - Response: 200 `{ success: true, latencyMs }` or 502 `{ success: false, error }`
 
 **Verification:**
-- [ ] Scenario 2.1.1.1: Query execution returns properly formatted response
-- [ ] Scenario 2.1.1.2: Invalid parameters throw validation errors
-- [ ] Scenario 2.1.2.1: Field metadata is correctly retrieved
-- [ ] Scenario 2.1.3.1 & 2.1.3.2: Connection verification works
+- [ ] POST /api/indexes creates index, loads data, persists metadata
+- [ ] PUT /api/indexes edits metadata, reloads data
+- [ ] Attempt to change sourceType rejected with 422
+- [ ] Duplicate index name rejected with 409
+- [ ] Enable/disable works; disabled indexes return 423 on pivot request
+- [ ] Test-connection returns latency or error
 
-**Affected Files:**
-- `PivotController/DataServer/Adapters/DataAdapter.cs` (new)
-- `PivotController/DataServer/Adapters/IDataAdapterFactory.cs` (new)
-- `Tests/Adapters/DataAdapterTests.cs` (new)
+**Specification Mapping:** 1.2, 1.6, 9.1
 
-### Task 2.2: Implement Database Adapter
+---
 
-**Objective:** Create SQL database connectivity through data adapter.
+### 1.6 CSV Separator Options
+
+**Objective:** Support CSV delimiter, decimal separator, thousands separator
 
 **Subtasks:**
-- [ ] Implement `DatabaseAdapter` extending DataAdapter
-- [ ] Support connection string resolution and pooling
-- [ ] Implement parameterized query execution with SQL injection prevention
-- [ ] Add result pagination support
-- [ ] Implement field metadata extraction from database schema
-- [ ] Add connection verification with retry logic
-- [ ] Create integration tests with test database
-- [ ] Write tests for scenarios 2.2.1 and 2.2.2
+- [ ] Modify `PivotController/Data/Providers/CsvDataProvider.cs` (or create if not exists):
+  - Constructor: accept IndexDefinition with CSV separator options
+  - LoadAsync(): use CsvDelimiter, CsvDecimalSeparator, CsvThousandsSeparator on parse
+  - Handle edge cases (multi-char separators, escaping)
+  - Test with various CSV formats (European decimals, thousands, etc.)
 
 **Verification:**
-- [ ] Scenario 2.2.1.1: Parameterized queries execute correctly
-- [ ] Scenario 2.2.1.2: Results are properly paginated
-- [ ] Scenario 2.2.2.1: Connection pooling is used
-- [ ] Scenario 2.2.2.2: Pool exhaustion is handled gracefully
-- [ ] SQL injection attempts are prevented
-- [ ] Works with existing data sources (CSV, JSON converted to database)
+- [ ] CSV file with semicolon delimiter parsed correctly
+- [ ] Decimal separator (comma vs period) honored in numeric fields
+- [ ] Thousands separator handled properly
+- [ ] Edit index to change separators; data reloaded with new options
 
-**Affected Files:**
-- `PivotController/DataServer/Adapters/DatabaseAdapter.cs` (new)
-- `PivotController/DataServer/Models/DatabaseQuerySettings.cs` (new)
-- `Tests/Adapters/DatabaseAdapterTests.cs` (new)
+**Specification Mapping:** 1.4
 
-### Task 2.3: Implement REST API Adapter
+---
 
-**Objective:** Enable connectivity to REST API data sources.
+## Phase 2: General & Data Storage Settings
+
+*Estimated: 1-2 days*
+
+### 2.1 Create Configuration Models
+
+**Objective:** Implement all 7 configuration sections per spec
 
 **Subtasks:**
-- [ ] Implement `RestApiAdapter` extending DataAdapter
-- [ ] Build HTTP request construction with parameters
-- [ ] Implement JSON response parsing and transformation
-- [ ] Add error handling for HTTP failures
-- [ ] Implement field metadata retrieval (introspection)
-- [ ] Add request timeout configuration
-- [ ] Create integration tests with mocked API
-- [ ] Write tests for scenarios 2.3.1 and 2.3.2
+- [ ] Create files in `PivotController/Configuration/Models/`:
+  - `GeneralSettings.cs` — Port, MinimumLogLevel, DataFolder
+  - `DataStorageSettings.cs` — RetryAttempts, CacheSizeLimit, KeepDataOnRefresh, MaxCacheItemSizeBytes
+  - `DataServerConfiguration.cs` (root) — ConfigVersion, DefaultIndexId, all 7 sections, Indexes[]
+- [ ] Add defaults per spec (§6, §7)
 
 **Verification:**
-- [ ] Scenario 2.3.1.1: REST endpoint is called with correct parameters
-- [ ] Scenario 2.3.1.2: HTTP errors are handled gracefully
-- [ ] Scenario 2.3.2.1: API responses are transformed correctly
-- [ ] Timeout handling works as configured
+- [ ] All properties with correct types and defaults
+- [ ] JSON serialization matches expected structure
 
-**Affected Files:**
-- `PivotController/DataServer/Adapters/RestApiAdapter.cs` (new)
-- `Tests/Adapters/RestApiAdapterTests.cs` (new)
+**Specification Mapping:** 6.1, 6.2, 7
 
-### Task 2.4: Implement Data Adapter Factory
+---
 
-**Objective:** Create factory pattern for adapter instantiation.
+### 2.2 Configuration Validation
+
+**Objective:** Implement per-section and cross-field validation
 
 **Subtasks:**
-- [ ] Implement `IDataAdapterFactory` interface
-- [ ] Create `DataAdapterFactory` class
-- [ ] Support creation of Database, REST API, and File adapters
-- [ ] Add adapter caching/pooling
-- [ ] Implement factory registration in Program.cs
-- [ ] Create unit tests for adapter selection logic
+- [ ] Create file: `PivotController/Configuration/Validation/ConfigurationValidator.cs`
+  - Validate per-section rules (Port 1-65535, RetryAttempts 0-30, etc.)
+  - Cross-field rules:
+    - `DefaultIndexId` must exist
+    - If `ReloadIntervalMinutes>0`, must have `AutoReload=true`
+    - If `EndpointEnabled=true` (reports), `StoragePath` must be writable
+  - Return FieldErrors dictionary for problem details
+- [ ] Add validation attributes to model properties where appropriate
 
 **Verification:**
-- [ ] Factory creates correct adapter type based on configuration
-- [ ] Adapters are properly configured with connection settings
-- [ ] Factory integration works with dependency injection
+- [ ] Invalid Port (0, 99999) rejected
+- [ ] RetryAttempts < 0 rejected
+- [ ] DefaultIndexId not existing rejected
+- [ ] Validation returns clear field-level errors
 
-**Affected Files:**
-- `PivotController/DataServer/Adapters/IDataAdapterFactory.cs` (new)
-- `PivotController/DataServer/Adapters/DataAdapterFactory.cs` (new)
-- `PivotController/Program.cs` (modified)
-- `Tests/Adapters/DataAdapterFactoryTests.cs` (new)
+**Specification Mapping:** 17.3
 
-## Phase 3: Security & Authentication
+---
 
-### Task 3.1: Create Authentication Service
+### 2.3 Configuration Service
 
-**Objective:** Implement request authentication with multiple schemes.
+**Objective:** Orchestrate configuration updates with persistence
 
 **Subtasks:**
-- [ ] Create namespace `PivotController.DataServer.Security`
-- [ ] Implement `DataAccessContext` class
-- [ ] Implement `IAuthenticationService` interface
-- [ ] Create `AuthenticationService` implementation
-- [ ] Support API Key authentication scheme
-- [ ] Support JWT token validation
-- [ ] Add authentication logging
-- [ ] Create unit tests for scenarios 3.1.1 and 3.1.2
+- [ ] Create file: `PivotController/Configuration/Services/ConfigurationService.cs`
+  - UpdateAsync(patch) — merge patch with current config
+  - Validate merged result
+  - Persist to DataServer/config.json (atomic)
+  - Apply runtime changes per rules (§12.5)
+  - Return { config, requiresRestart }
+- [ ] Implement RequiresRestart detection logic
 
 **Verification:**
-- [ ] Scenario 3.1.1.1: Valid API key authenticates successfully
-- [ ] Scenario 3.1.1.2 & 3.1.1.3: Missing/invalid API key returns 401
-- [ ] Scenario 3.1.1.4: OAuth2 integration works
-- [ ] JWT token validation with expiration works
+- [ ] MinimumLogLevel change applied immediately (requiresRestart=false)
+- [ ] Port change flagged as requiresRestart=true
+- [ ] Invalid update rejected with 422; config unchanged
 
-**Affected Files:**
-- `PivotController/DataServer/Security/DataAccessContext.cs` (new)
-- `PivotController/DataServer/Security/IAuthenticationService.cs` (new)
-- `PivotController/DataServer/Security/AuthenticationService.cs` (new)
-- `Tests/Security/AuthenticationServiceTests.cs` (new)
+**Specification Mapping:** 3.1, 3.2
 
-### Task 3.2: Create Authorization Service
+---
 
-**Objective:** Implement role-based authorization and field-level access control.
+## Phase 3: Database Query Settings
+
+*Estimated: 1-2 days*
+
+### 3.1 Database Provider Abstraction
+
+**Objective:** Implement pluggable database provider pattern
 
 **Subtasks:**
-- [ ] Implement `IAuthorizationService` interface
-- [ ] Create `AuthorizationService` implementation
-- [ ] Support role-based access policies
-- [ ] Implement field-level security with optional masking
-- [ ] Add authorization caching
-- [ ] Create unit tests for scenarios 3.2.1 and field-level security
+- [ ] Create file: `PivotController/Data/Providers/IDatabaseQueryProvider.cs`
+  - Properties: SourceType
+  - Methods: CreateConnection(connectionString)
+- [ ] Create file: `PivotController/Data/Providers/SqliteQueryProvider.cs` (mandatory)
+  - Implement for SQLite connections
+- [ ] Create stub files (optional, documented):
+  - `SqlServerQueryProvider.cs` (requires System.Data.SqlClient package)
+  - `PostgresqlQueryProvider.cs` (requires Npgsql package)
+  - `MySqlQueryProvider.cs` (requires MySqlConnector package)
+  - etc.
+- [ ] Create file: `PivotController/Data/Providers/DatabaseDataProvider.cs`
+  - Implement IDataSourceProvider
+  - Use IDatabaseQueryProvider factory to create connection
+  - Execute query with timeout
+  - Map results to ExpandoObject[]
 
 **Verification:**
-- [ ] Scenario 3.2.1.1: Authorized actions are allowed
-- [ ] Scenario 3.2.1.2: Unauthorized actions return 403
-- [ ] Scenario 1.5.3.1: User with field access gets values
-- [ ] Scenario 1.5.3.2: User without access field is excluded
-- [ ] Scenario 1.5.3.3: Field masking works correctly
-- [ ] Field access rules are enforced
+- [ ] SQLite provider works (mandatory)
+- [ ] Optional providers gracefully missing (reflection-registered only if package present)
+- [ ] Query execution returns data or timeout error
 
-**Affected Files:**
-- `PivotController/DataServer/Security/IAuthorizationService.cs` (new)
-- `PivotController/DataServer/Security/AuthorizationService.cs` (new)
-- `PivotController/DataServer/Configuration/Models/SecuritySettings.cs` (modified)
-- `Tests/Security/AuthorizationServiceTests.cs` (new)
+**Specification Mapping:** 5.1, 5.2, 5.3, 14.1
 
-### Task 3.3: Implement Audit Logging
+---
 
-**Objective:** Create comprehensive audit trail for compliance.
+### 3.2 Query Timeout Enforcement
+
+**Objective:** Enforce CommandTimeLimit on queries
 
 **Subtasks:**
-- [ ] Implement `IAuditLogger` interface
-- [ ] Create `AuditLogger` implementation
-- [ ] Add structured logging for data access events
-- [ ] Include event details: UserId, Timestamp, Action, Resource, Success/Failure
-- [ ] Implement log file writing with rotation
-- [ ] Add event filtering based on configuration
-- [ ] Create unit tests for audit logging scenarios
+- [ ] Modify `DatabaseDataProvider`:
+  - If `CommandTimeoutEnabled=true`, set `command.CommandTimeout = CommandTimeLimit`
+  - If `CommandTimeLimit=0`, set `CommandTimeout = 0` (infinite)
+  - On timeout: catch timeout exception, log, return 504
 
 **Verification:**
-- [ ] Scenario 1.5.4.1: Query access is logged with all details
-- [ ] Scenario 1.5.4.2: Failed access attempts are logged
-- [ ] Scenario 1.5.4.3: Logging disabled skips events
-- [ ] Logs contain required fields: UserId, Timestamp, Action, etc.
+- [ ] Query within timeout completes normally
+- [ ] Long-running query canceled at timeout threshold; returns 504
+- [ ] Timeout disabled (0): query runs indefinitely
 
-**Affected Files:**
-- `PivotController/DataServer/Security/IAuditLogger.cs` (new)
-- `PivotController/DataServer/Security/AuditLogger.cs` (new)
-- `PivotController/Program.cs` (modified - register service)
-- `Tests/Security/AuditLoggerTests.cs` (new)
+**Specification Mapping:** 5.1
 
-### Task 3.4: Create Authentication Middleware
+---
 
-**Objective:** Integrate authentication into request pipeline.
+## Phase 4: HTTPS Settings
+
+*Estimated: 1 day*
+
+### 4.1 Certificate Service
+
+**Objective:** Resolve X509Certificate2 from PFX, PEM, or Windows store
 
 **Subtasks:**
-- [ ] Create middleware class `DataServerAuthenticationMiddleware`
-- [ ] Register middleware in Program.cs pipeline
-- [ ] Extract credentials from request
-- [ ] Call authentication service
-- [ ] Add context to HttpContext
-- [ ] Handle authentication failures
+- [ ] Create file: `PivotController/Core/Security/CertificateService.cs`
+  - ResolveCertificate(HttpsSettings) — returns X509Certificate2
+  - Support:
+    - PFX: `new X509Certificate2(pfxPath, password)`
+    - PEM: `X509Certificate2.CreateFromPemFile(certPath, keyPath)`
+    - Store: lookup by `StoreLocation`, `StoreName`, `Thumbprint` (Windows-only, guarded)
+  - Validation: exactly one source must be configured
 
 **Verification:**
-- [ ] Unauthenticated requests return 401
-- [ ] Authenticated requests have context set
-- [ ] Authentication occurs before business logic
+- [ ] PFX certificate loaded
+- [ ] PEM certificate loaded
+- [ ] Windows store certificate loaded (if on Windows)
+- [ ] Invalid certificate paths fail with clear error
 
-**Affected Files:**
-- `PivotController/DataServer/Security/DataServerAuthenticationMiddleware.cs` (new)
-- `PivotController/Program.cs` (modified)
+**Specification Mapping:** 6.4, 15.1
 
-## Phase 4: Database Query Settings
+---
 
-### Task 4.1: Implement Query Configuration
+### 4.2 Kestrel HTTPS Configuration
 
-**Objective:** Support predefined and parameterized queries.
+**Objective:** Configure Kestrel listener with HTTPS and protocol options
 
 **Subtasks:**
-- [ ] Implement `QueryConfiguration` class
-- [ ] Implement `DatabaseQuerySettings` with query dictionary
-- [ ] Add query validation: parameter whitelisting, SQL validation
-- [ ] Implement query parameter substitution
-- [ ] Add query execution logging
-- [ ] Create unit tests for scenarios 1.3.1 through 1.3.3
+- [ ] Modify `PivotController/Program.cs`:
+  - `builder.WebHost.ConfigureKestrel()`:
+    - If `Https.Enabled=true`:
+      - Resolve certificate via CertificateService
+      - `options.Listen(IPAddress.Any, Port, lo => lo.UseHttps(cert))`
+      - Map protocols: HTTP1 | HTTP2 | HTTP1_AND_HTTP2
+    - Set TLS 1.2+ enforced
+  - `app.UseHttpsRedirection()` when HTTPS enabled
 
 **Verification:**
-- [ ] Scenario 1.3.1.1: Predefined queries execute with valid parameters
-- [ ] Scenario 1.3.1.2: Unauthorized parameters are rejected
-- [ ] Scenario 1.3.1.3: Unauthenticated queries are blocked
-- [ ] Scenario 1.3.2.1 through 1.3.2.3: Pagination defaults and limits work
-- [ ] Scenario 1.3.3.1 & 1.3.3.2: Query timeouts are enforced
+- [ ] HTTPS listener active on configured port
+- [ ] HTTP/1.1 and/or HTTP/2 negotiated per setting
+- [ ] TLS 1.2+ enforced
 
-**Affected Files:**
-- `PivotController/DataServer/Configuration/Models/DatabaseQuerySettings.cs` (new)
-- `PivotController/DataServer/Models/QueryConfiguration.cs` (new)
-- `Tests/DatabaseQuerySettingsTests.cs` (new)
+**Specification Mapping:** 15.1, 6.4
 
-## Phase 5: HTTPS & Report Sharing
+---
 
-### Task 5.1: Implement HTTPS Configuration
+## Phase 5: Security Settings
 
-**Objective:** Support SSL/TLS certificate management.
+*Estimated: 1-2 days*
+
+### 5.1 User Model & Password Hashing
+
+**Objective:** Implement PBKDF2 user authentication
 
 **Subtasks:**
-- [ ] Implement `HttpsSettings` class
-- [ ] Add certificate path and password configuration
-- [ ] Implement certificate validation logic
-- [ ] Add certificate pinning support
-- [ ] Create unit tests for scenarios 1.4.1 and 1.4.2
+- [ ] Create file: `PivotController/Core/Security/PBKDF2PasswordHasher.cs`
+  - Hash(password) — PBKDF2 with 100,000 iterations, SHA-256
+  - Verify(password, hash) — using constant-time comparison
+- [ ] Create file: `PivotController/Core/Security/ConstantTimeComparer.cs`
+  - Compare two byte arrays in constant time (no early exit on mismatch)
+- [ ] Create file: `PivotController/Security/Models/User.cs`
+  - Properties: Username, PasswordHash, CreatedAt, UpdatedAt
 
 **Verification:**
-- [ ] Scenario 1.4.1.1: HTTPS is enabled with valid certificate
-- [ ] Scenario 1.4.1.2: HTTPS disabled works in development
-- [ ] Scenario 1.4.1.3: Certificate validation is enforced
-- [ ] Scenario 1.4.2.1 & 1.4.2.2: Certificate pinning works
+- [ ] Hashed password matches spec format `PBKDF2$100000$SHA256$saltB64$hashB64`
+- [ ] Verification succeeds for correct password
+- [ ] Verification fails for wrong password
+- [ ] Constant-time comparison prevents timing attacks
 
-**Affected Files:**
-- `PivotController/DataServer/Configuration/Models/HttpsSettings.cs` (new)
-- `Tests/HttpsSettingsTests.cs` (new)
+**Specification Mapping:** 7.1, 8
 
-### Task 5.2: Implement Report Sharing Settings
+---
 
-**Objective:** Build report template and sharing configuration.
+### 5.2 User Service & CRUD APIs
+
+**Objective:** Manage users (create, update, delete, list)
 
 **Subtasks:**
-- [ ] Implement `ReportTemplate` class
-- [ ] Implement `ReportAccessPolicy` class
-- [ ] Implement `NotificationRule` class
-- [ ] Implement `ReportSharingSettings` with template storage
-- [ ] Add report access control enforcement
-- [ ] Create unit tests for scenarios 1.6.1 through 1.6.3
+- [ ] Create file: `PivotController/Security/Services/UserService.cs`
+  - Dependencies: IIndexStore (for users.json persistence), ILogger
+  - CreateAsync(username, password) — hash password, save user
+  - UpdatePasswordAsync(username, newPassword) — update hash
+  - DeleteAsync(username)
+  - GetAsync(username) — load user
+  - ListAsync() — all users (no password hashes)
+  - VerifyAsync(username, password) — for auth
+- [ ] Create file: `PivotController/Security/Controllers/SecurityController.cs`
+  - `GET /api/security/users` — list users (401 if auth required)
+  - `POST /api/security/users` — create user
+  - `PUT /api/security/users/{username}` — update password
+  - `DELETE /api/security/users/{username}` — delete user
 
 **Verification:**
-- [ ] Scenario 1.6.1.1 through 1.6.1.3: Report templates CRUD works
-- [ ] Scenario 1.6.2.1 through 1.6.2.3: Report access policies enforced
-- [ ] Scenario 1.6.3.1 & 1.6.3.2: Report distribution configured correctly
+- [ ] User created; password stored as hash
+- [ ] User verified via correct password
+- [ ] User not verified via wrong password
+- [ ] User deleted; cannot authenticate
+- [ ] List endpoint returns no password hashes
 
-**Affected Files:**
-- `PivotController/DataServer/Configuration/Models/ReportSharingSettings.cs` (new)
-- `PivotController/DataServer/Models/ReportTemplate.cs` (new)
-- `PivotController/DataServer/Models/ReportAccessPolicy.cs` (new)
-- `Tests/ReportSharingSettingsTests.cs` (new)
+**Specification Mapping:** 7.1, 7.2
 
-## Phase 6: Integration with PivotController
+---
 
-### Task 6.1: Modify PivotController for Data Server
+### 5.3 Basic Authentication Middleware
 
-**Objective:** Integrate Custom Data Server with existing pivot endpoint.
+**Objective:** Implement Basic Auth middleware for securing endpoints
 
 **Subtasks:**
-- [ ] Inject Custom Data Server services
-- [ ] Modify GetData() to use data adapters when configured
-- [ ] Add new action handlers for custom server operations
-- [ ] Maintain backward compatibility with existing data loading
-- [ ] Update cached data retrieval to support adapters
-- [ ] Create integration tests
+- [ ] Create file: `PivotController/Core/Security/PivotBasicAuthMiddleware.cs`
+  - Extract Authorization header
+  - Decode Base64
+  - Split on first ':'
+  - Verify username/password via UserService
+  - Set ClaimsPrincipal or return 401 with WWW-Authenticate header
+- [ ] Modify `PivotController/Program.cs`:
+  - Register middleware in pipeline (before UseAuthorization)
+  - Gate protected endpoints with `[Authorize]` or check in controller
 
 **Verification:**
-- [ ] Scenario 4.1.1.1: Legacy requests work unchanged
-- [ ] Scenario 4.1.1.2: New requests use custom adapters
-- [ ] Existing sample applications continue working
-- [ ] GetMembers, GetRawData, GetPivotValues all work with custom adapters
+- [ ] Request without Authorization returns 401
+- [ ] Request with valid credentials succeeds (200)
+- [ ] Request with invalid credentials returns 401
+- [ ] Disabled BasicAuth allows all requests
 
-**Affected Files:**
-- `PivotController/Controllers/PivotController.cs` (modified)
-- `Tests/Integration/PivotControllerIntegrationTests.cs` (new)
+**Specification Mapping:** 7.1, 15.2
 
-### Task 6.2: Update Service Registration
+---
 
-**Objective:** Complete Program.cs setup for all services.
+### 5.4 CORS Origin Validation
+
+**Objective:** Enforce AllowedOrigins configuration
 
 **Subtasks:**
-- [ ] Register all configuration services
-- [ ] Register authentication/authorization services
-- [ ] Register data adapter factory
-- [ ] Register audit logger
-- [ ] Register middleware components
-- [ ] Configure logging
+- [ ] Create file: `PivotController/Core/Security/OriginValidator.cs`
+  - Build CORS policy from Security.AllowedOrigins
+  - AllowedOrigins=["*"] → AllowAnyOrigin
+  - Otherwise: exact match against list
+- [ ] Modify `PivotController/Program.cs`:
+  - Register CORS middleware with OriginValidator policy
+  - Reject no-Origin header when origins restricted (CSRF defense)
 
 **Verification:**
-- [ ] All services resolve correctly
-- [ ] Dependency injection works for all components
-- [ ] Middleware pipeline executes in correct order
+- [ ] Wildcard AllowedOrigins allows any origin
+- [ ] Specific origins: allowed origin succeeds, disallowed rejected (403)
+- [ ] No-Origin header rejected when restricted
 
-**Affected Files:**
-- `PivotController/Program.cs` (modified)
+**Specification Mapping:** 7.3, 15.3
 
-### Task 6.3: Update Configuration Files
+---
 
-**Objective:** Create complete configuration examples.
+## Phase 6: Report Sharing Settings
+
+*Estimated: 1 day*
+
+### 6.1 Report Sharing Service
+
+**Objective:** Manage report storage with expiration and quota
 
 **Subtasks:**
-- [ ] Add sample Custom Data Server configuration to appsettings.json
-- [ ] Create appsettings.Development.json with development defaults
-- [ ] Add appsettings.Production.json template for production
-- [ ] Document all configuration options
-- [ ] Create configuration validation on startup
+- [ ] Create file: `PivotController/Reports/Models/ReportMetadata.cs`
+  - Properties: ReportId, Name, Owner, CreatedAt, ExpiresAt, SizeBytes
+- [ ] Create file: `PivotController/Reports/Services/ReportSharingService.cs`
+  - SaveAsync(name, owner, payload) — store report, return reportId
+  - GetAsync(reportId) — retrieve report; return 410 if expired
+  - DeleteAsync(reportId) — delete report
+  - ListAsync() — list all report metadata
+  - CheckQuotaAsync() — verify folder size limit
 
 **Verification:**
-- [ ] Configuration loads from all environment-specific files
-- [ ] Validation errors are clear and actionable
-- [ ] Examples cover all configuration categories
+- [ ] Report saved and retrieved successfully
+- [ ] Expired report returns 410
+- [ ] Quota check prevents save when full; returns 507
+- [ ] Delete removes report
 
-**Affected Files:**
-- `PivotController/appsettings.json` (modified)
-- `PivotController/appsettings.Development.json` (modified)
-- `PivotController/appsettings.Production.json` (new)
+**Specification Mapping:** 8.1, 8.2, 8.3, 16.1
 
-## Phase 7: Testing & Validation
+---
 
-### Task 7.1: Create Integration Test Suite
+### 6.2 Report Sweep Worker
 
-**Objective:** Validate full feature integration and requirements.
+**Objective:** Auto-delete expired reports and maintain quota
 
 **Subtasks:**
-- [ ] Create integration test project structure
-- [ ] Build test database setup
-- [ ] Create test fixtures for all scenarios from spec.md
-- [ ] Test all scenario combinations
-- [ ] Verify backward compatibility
-- [ ] Test error conditions and edge cases
-- [ ] Load test with large datasets
+- [ ] Create file: `PivotController/Reports/Services/ReportSweepWorker.cs` (BackgroundService)
+  - Runs every 5 minutes (when AutoDelete=true)
+  - Remove reports where `ExpiresAt < now`
+  - If quota exceeded, evict oldest until under limit
+  - Log sweep results
 
 **Verification:**
-- [ ] All specification scenarios pass (8 requirements × multiple scenarios each)
-- [ ] No regressions in existing functionality
-- [ ] Sample applications run successfully
-- [ ] Performance meets requirements
+- [ ] Expired reports deleted after sweep
+- [ ] Quota maintained (no folder size exceed after sweep)
 
-**Affected Files:**
-- `Tests/Integration/` (new directory)
-- Test configurations and fixtures
+**Specification Mapping:** 16.2, 8.3
 
-### Task 7.2: Security Testing
+---
 
-**Objective:** Validate security implementations.
+### 6.3 Report APIs
+
+**Objective:** Expose report endpoints
 
 **Subtasks:**
-- [ ] Test SQL injection prevention
-- [ ] Test authorization bypass attempts
-- [ ] Test audit log completeness
-- [ ] Verify certificate validation
-- [ ] Test field-level security enforcement
-- [ ] Validate error messages don't leak sensitive info
+- [ ] Create file: `PivotController/Reports/Controllers/ReportsController.cs`
+  - `POST /api/reportsharing/reports` — save report
+    - Request: { name, owner, payload }
+    - Response: 201 `{ reportId, createdAt, expiresAt, sizeBytes }`
+  - `GET /api/reportsharing/reports/{reportId}` — retrieve report
+    - Response: 200 or 410 if expired
+  - `GET /api/reportsharing/reports` — list report metadata
+  - `DELETE /api/reportsharing/reports/{reportId}` — delete report
 
 **Verification:**
-- [ ] All injection attempts are prevented
-- [ ] Unauthorized access is blocked
-- [ ] Complete audit trail is maintained
-- [ ] No security vulnerabilities found
+- [ ] Report saved via API
+- [ ] Report retrieved via API
+- [ ] Expired report returns 410
+- [ ] List shows all reports
 
-**Affected Files:**
-- `Tests/Security/` (new directory)
+**Specification Mapping:** 8.1, 8.2, 9.1
 
-### Task 7.3: Run Sample Application Verification
+---
 
-**Objective:** Validate feature works with existing client.
+## Phase 7: Persistence, Logging, APIs, Hot-Reload
+
+*Estimated: 2-3 days*
+
+### 7.1 Atomic JSON Store
+
+**Objective:** Persist JSON files safely with corruption recovery
 
 **Subtasks:**
-- [ ] Ensure existing Sample/ application runs unchanged
-- [ ] Verify pivot functionality works as before
-- [ ] Test with custom data server enabled
-- [ ] Test with multiple data sources
-- [ ] Test field masking
-- [ ] Test report sharing
+- [ ] Create file: `PivotController/Core/Persistence/AtomicJsonStore.cs`
+  - Save<T>(filePath, obj) — temp-file-rename pattern
+  - Load<T>(filePath, defaultValue) — load with corruption handling
+  - On corruption: quarantine as `{file}.corrupt.{timestamp}`; return default; log warning
 
 **Verification:**
-- [ ] Sample/ pivot.html displays data correctly
-- [ ] Sample/ pivot.js connects to controller
-- [ ] Pivot table calculations work
-- [ ] All existing features function properly
+- [ ] Save creates temp file, renames to target atomically
+- [ ] Corrupt JSON quarantined; application continues with defaults
 
-**Affected Files:**
-- `Sample/pivot.html` (verify, no changes needed)
-- `Sample/pivot.js` (verify, no changes needed)
+**Specification Mapping:** 11, 12.5
 
-## Phase 8: Documentation & Delivery
+---
 
-### Task 8.1: Create Implementation Guide
+### 7.2 Configuration File Watcher
 
-**Objective:** Document how to use the Custom Data Server feature.
+**Objective:** Hot-reload configuration changes from config.json
 
 **Subtasks:**
-- [ ] Write configuration guide with examples
-- [ ] Document authentication setup (API Key, OAuth2, JWT)
-- [ ] Document authorization policy configuration
-- [ ] Create adapter implementation guide for custom sources
-- [ ] Document troubleshooting and common issues
-- [ ] Create migration guide for existing deployments
+- [ ] Modify/create `PivotController/Configuration/Services/ConfigurationFileWatcher.cs`
+  - FileSystemWatcher on `DataServer/*.json`
+  - 500 ms debounce for editor writes
+  - Load and validate new config
+  - Compute delta vs. current
+  - Apply runtime-applicable options (§12.5 table)
+  - Log requiresRestart options as warnings
+  - On validation error: keep last-known-good; log error
 
 **Verification:**
-- [ ] Guide covers all 6 configuration categories
-- [ ] Examples are runnable and tested
-- [ ] Common tasks are clearly documented
+- [ ] MinimumLogLevel changed in config.json; reflected in logs within 1 s
+- [ ] Port changed in config.json; logged as requiresRestart
+- [ ] Invalid JSON in config.json; error logged; previous config retained
 
-**Affected Files:**
-- `docs/CUSTOM_DATA_SERVER_GUIDE.md` (new)
-- `docs/API_REFERENCE.md` (new)
+**Specification Mapping:** 12.5
 
-### Task 8.2: Update README
+---
 
-**Objective:** Add Custom Data Server documentation to main README.
+### 7.3 Logging Infrastructure
+
+**Objective:** Structured logging to console and rolling file
 
 **Subtasks:**
-- [ ] Add feature overview
-- [ ] Add quick start example
-- [ ] Link to detailed documentation
-- [ ] Update dependencies list
+- [ ] Create file: `PivotController/Core/Logging/RollingFileLoggerProvider.cs`
+  - Logs to `logs/dataserver-{yyyyMMdd}.jsonl`
+  - JSON format: { timestamp, level, category, message, correlationId, ... }
+  - 30-day retention (archive/delete old files)
+  - Structured fields per category
+- [ ] Modify `PivotController/Program.cs`:
+  - ClearProviders()
+  - AddConsole()
+  - Add RollingFileLoggerProvider
+  - Filter minimum level per config
 
 **Verification:**
-- [ ] README is clear and helpful
-- [ ] Links to documentation work
+- [ ] Logs written to console
+- [ ] Logs written to rolling JSON file
+- [ ] MinimumLogLevel filter applied (Debug records absent at Info)
 
-**Affected Files:**
-- `README.md` (modified)
+**Specification Mapping:** 17.1
 
-### Task 8.3: Code Documentation
+---
 
-**Objective:** Add XML documentation to all public APIs.
+### 7.4 Exception Handling & Problem Details
+
+**Objective:** Standardized error responses per RFC 7807
 
 **Subtasks:**
-- [ ] Document all public classes and methods
-- [ ] Include usage examples in comments
-- [ ] Document configuration properties
-- [ ] Document error conditions
+- [ ] Create file: `PivotController/Core/Http/DataServerExceptionFilter.cs` (IExceptionFilter)
+  - Map exceptions to HTTP status codes
+  - Generate ProblemDetails with type, title, detail, status, traceId
+  - Include field-level errors for validation exceptions
+  - Add category and correlationId to extensions
+- [ ] Register filter in Program.cs
 
 **Verification:**
-- [ ] All public members have documentation
-- [ ] Visual Studio IntelliSense works
+- [ ] 422 validation error returns problem details with field-level errors
+- [ ] 404 not found returns problem details
+- [ ] Unhandled exception returns 500 with no stack trace outside Development
 
-**Affected Files:**
-- All new DataServer classes (add XML comments)
+**Specification Mapping:** 11, 9.1
 
-## Final Verification Task
+---
 
-### Task 9.1: Complete Feature Verification
+### 7.5 Configuration Controller
 
-**Objective:** Comprehensive validation before completion.
+**Objective:** Expose configuration APIs
+
+**Subtasks:**
+- [ ] Create file: `PivotController/Configuration/Controllers/ConfigController.cs`
+  - `GET /api/config` — return full configuration
+  - `GET /api/config/{section}` — return single section (general/dataStorage/databaseQuery/https/security/reportSharing)
+  - `PUT /api/config` — merge-patch update
+    - Response: 200 `{ config, requiresRestart }`
+    - On error: 422 with field errors
+
+**Verification:**
+- [ ] GET /api/config returns all 7 sections + indexes
+- [ ] GET /api/config/general returns only General section
+- [ ] PUT /api/config merges partial update; flags requiresRestart
+
+**Specification Mapping:** 3.1, 3.2
+
+---
+
+### 7.6 Health Endpoint
+
+**Objective:** Liveness endpoint for monitoring
+
+**Subtasks:**
+- [ ] Add `GET /health` endpoint (or use ASP.NET Core HealthChecks)
+  - Response: 200 OK if responsive
+  - Can include index statuses in response
+
+**Verification:**
+- [ ] GET /health returns 200
+
+**Specification Mapping:** 17.2
+
+---
+
+## Phase 8: Client-Side Sample Configuration (Final Step)
+
+*Estimated: 0.5 day*
+
+### 8.1 Update Sample Pivot Table
+
+**Objective:** Wire client-side sample to send index name
+
+**Subtasks:**
+- [ ] Modify `Sample/pivot.js`:
+  - Define `PIVOT_INDEX = "Sales-Data"` (or preferred index)
+  - Define `PIVOT_URL = "http://localhost:5285/api/pivot/post"`
+  - Pass `index: PIVOT_INDEX` in every pivot request (dataSourceSettings.index)
+- [ ] (Optional) Create `Sample/config.js` for shared configuration
+  - Export window.PivotDataServer = { url, index }
+- [ ] Verify `Sample/pivot.html` loads without modification
+- [ ] Test: pivot table renders data from named index
+
+**Verification:**
+- [ ] Sample/pivot.js includes index field in requests
+- [ ] Pivot table loads data from specified index
+- [ ] Multiple indexes can be tested by changing PIVOT_INDEX
+
+**Specification Mapping:** 10.2, 10.3, 12.1
+
+---
+
+## Cross-Cutting Tasks
+
+### Data Provider Factory
+
+**Objective:** Implement factory for creating data providers by source type
+
+**Subtasks:**
+- [ ] Create file: `PivotController/Data/Providers/DataSourceProviderFactory.cs`
+  - CreateProvider(DataSourceType) — returns IDataSourceProvider
+  - Support: Json, Csv, Database (via IDatabaseQueryProvider)
+- [ ] Register in DI
+
+---
+
+### Index Store Abstraction
+
+**Objective:** Persist and load index metadata
+
+**Subtasks:**
+- [ ] Create file: `PivotController/Core/Persistence/IIndexStore.cs`
+  - Methods: LoadAsync(), SaveAsync()
+- [ ] Implement using AtomicJsonStore
+- [ ] Use for indexes.json persistence
+
+---
+
+### Retry Policy
+
+**Objective:** Implement exponential backoff retry
+
+**Subtasks:**
+- [ ] Create file: `PivotController/Core/Retry/RetryPolicy.cs`
+  - ExecuteAsync(attempts, operation, logger, ct) — transient-only retry
+  - Delays: 250ms * 2^attempt + jitter ±20%
+  - Catch: IOException, TimeoutException, transient DbException
+  - Fail fast: ValidationException, non-transient errors
+
+**Verification:**
+- [ ] Transient failure retried up to RetryAttempts
+- [ ] Validation failure fails immediately
+- [ ] Exponential backoff delays applied
+
+**Specification Mapping:** 4.1, 13.2
+
+---
+
+## Verification & Testing
+
+### Unit Tests
+
+**Objective:** Core business logic tested in isolation
 
 **Checklist:**
-- [ ] All requirements from spec.md have passing tests
-- [ ] All tasks above are completed
-- [ ] Code review completed
-- [ ] Security audit completed
-- [ ] Performance benchmarks met
-- [ ] Documentation is complete
-- [ ] Sample applications work unchanged
-- [ ] Backward compatibility verified
-- [ ] No breaking changes introduced
-- [ ] Configuration validation works
-- [ ] All error scenarios handled gracefully
-- [ ] Audit logging functional
-- [ ] Field-level security enforced
-- [ ] Authentication working with all schemes
-- [ ] Data adapters functional
+- [ ] ConfigurationValidator rules
+- [ ] PBKDF2 hashing and verification
+- [ ] ConstantTimeComparer
+- [ ] AtomicJsonStore (corrupt file handling)
+- [ ] RetryPolicy (backoff, transient detection)
+- [ ] OriginValidator (CORS rules)
+- [ ] Quota math (report folder limits)
 
-**Evidence from EXPLORATION.md Integration:**
-- [ ] Feature supports all 6 Flexmonster Data Server configuration categories
-- [ ] Integrates with existing PivotEngine without modification
-- [ ] Multiple data sources supported (Database, REST API, File-based)
-- [ ] Maintains existing endpoint contract
-- [ ] Works with existing Sample/ application
+### Integration Tests (WebApplicationFactory)
 
-**Verification Document:** Create `VERIFICATION_REPORT.md` with:
-- Summary of all completed tasks
-- Test results and pass rates
-- Performance metrics
-- Security assessment results
-- Known limitations or future improvements
+**Objective:** API contracts and workflows tested end-to-end
 
-**Affected Files:**
-- `VERIFICATION_REPORT.md` (new)
+**Checklist:**
+- [ ] Index creation, listing, editing, deletion
+- [ ] Pivot request routing by index name
+- [ ] Configuration CRUD (merge-patch, validation)
+- [ ] Basic Auth (401 without, 200 with credentials)
+- [ ] CORS (403 for disallowed, 200 for allowed)
+- [ ] Report save/retrieve/expire/delete
+- [ ] Database timeout stub provider (504)
 
----
+### Regression Tests
 
-## Task Dependencies
+**Objective:** Existing pivot functionality unaffected
 
-```
-1.1 (Config Service)
-├── 1.2 (General Settings)
-├── 1.3 (Data Storage)
-│   ├── 1.4 (Cache Strategy)
-│   └── 1.5 (Incremental Load)
-├── 1.4 (Database Query)
-├── 1.5 (HTTPS)
-└── 1.6 (Report Sharing)
-    └── 2.1 (Abstract Adapter)
-        ├── 2.2 (Database Adapter)
-        ├── 2.3 (REST API Adapter)
-        └── 2.4 (Adapter Factory)
-            ├── 3.1 (Authentication)
-            ├── 3.2 (Authorization)
-            ├── 3.3 (Audit Logging)
-            └── 3.4 (Auth Middleware)
-                └── 6.1 (PivotController Integration)
-                    ├── 6.2 (Service Registration)
-                    └── 6.3 (Config Files)
-                        ├── 7.1 (Integration Tests)
-                        ├── 7.2 (Security Tests)
-                        ├── 7.3 (Sample App Verification)
-                        ├── 8.1 (Implementation Guide)
-                        ├── 8.2 (Update README)
-                        ├── 8.3 (Code Documentation)
-                        └── 9.1 (Final Verification)
-```
+**Checklist:**
+- [ ] fetchFieldMembers on migrated "default" index
+- [ ] fetchRawData on migrated index
+- [ ] Export (Excel/CSV) on routed index
+- [ ] Sample/pivot.html renders without errors
 
-## Success Criteria
+### E2E Test
 
-✓ **Complete:** All tasks executed, all tests passing, all requirements met
-✓ **Verified:** Feature works with existing Sample applications
-✓ **Documented:** Comprehensive guides and API documentation provided
-✓ **Secure:** Security audit completed, no vulnerabilities found
-✓ **Performant:** Performance benchmarks met for large datasets
-✓ **Compatible:** No breaking changes to existing pivot endpoint
+**Objective:** Full flow from sample to server to pivot display
+
+**Checklist:**
+- [ ] Run Sample/pivot.html
+- [ ] Select index "Sales-Data" (or configure in pivot.js)
+- [ ] Pivot table renders data from that index
+- [ ] Grouping/sorting works
+- [ ] Field list shows correct fields
+
+### Manual Settings-File Testing (§12.5)
+
+**Objective:** Verify each Phase 1 option via JSON file editing
+
+**Checklist:**
+- [ ] Edit MinimumLogLevel in config.json; verify log output changes within 1 s
+- [ ] Edit Index ReloadIntervalMinutes; verify auto-reload triggers at interval
+- [ ] Edit CSV delimiter; verify data reloads with new separator
+- [ ] Edit Mapping enabled/disabled; verify field types change
+- [ ] Edit BasicAuthEnabled; verify auth required/bypassed
+- [ ] Edit AllowedOrigins; verify CORS policy changes
+- [ ] Edit ReportExpirationTimeMinutes; verify old reports expire
 
 ---
 
-**Note:** This task list is a living document. As implementation progresses, tasks may be refined, split, or consolidated based on technical findings. Any significant deviations from this plan must be documented in the implementation summary.
+## Task Dependencies & Execution Order
+
+```
+Phase 1 (Foundational)
+├─ 1.1 IndexDefinition
+├─ 1.2 IndexManager → depends on 1.1
+├─ 1.3 Bootstrap & Migration → depends on 1.1, 1.2
+├─ 1.4 Pivot Routing → depends on 1.2, 1.3
+├─ 1.5 Index APIs → depends on 1.2, 1.3
+└─ 1.6 CSV Separators → depends on 1.5
+
+Phase 2 → depends on Phase 1
+├─ 2.1 Config Models
+├─ 2.2 Validation → depends on 2.1
+└─ 2.3 ConfigService → depends on 2.1, 2.2
+
+Phase 3 → depends on Phase 1, 2
+├─ 3.1 DB Providers
+└─ 3.2 Timeout → depends on 3.1
+
+Phase 4 → depends on Phase 2
+├─ 4.1 CertificateService
+└─ 4.2 Kestrel Config → depends on 4.1
+
+Phase 5 → depends on Phase 2
+├─ 5.1 User Model & Hashing
+├─ 5.2 UserService & CRUD → depends on 5.1
+├─ 5.3 BasicAuth → depends on 5.2
+└─ 5.4 CORS → depends on 2
+
+Phase 6 → depends on Phase 2
+├─ 6.1 ReportService
+├─ 6.2 ReportSweepWorker → depends on 6.1
+└─ 6.3 Report APIs → depends on 6.1, 6.2
+
+Phase 7 → depends on all phases
+├─ 7.1 AtomicJsonStore
+├─ 7.2 FileWatcher → depends on 7.1, 2.3
+├─ 7.3 Logging
+├─ 7.4 Exception Filter
+├─ 7.5 ConfigController
+└─ 7.6 Health Endpoint
+
+Phase 8 (Final) → depends on Phase 1, 7
+└─ 8.1 Update Sample → all phases complete
+```
+
+---
+
+## Sign-Off & Approval
+
+**Status:** Ready for Implementation
+
+Before proceeding with Phase 1, confirm:
+
+- [ ] All specification documents approved (EXPLORATION, proposal, design, spec.md)
+- [ ] All OpenSpec artifacts reviewed and signed off
+- [ ] Resources allocated (developer, reviewer, QA)
+- [ ] Timeline (10-15 business days) acceptable
+- [ ] This tasks.md document reviewed and acknowledged
+
+**Implementation Begins:** Upon approval above
+

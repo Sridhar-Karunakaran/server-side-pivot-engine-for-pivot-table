@@ -1,11 +1,11 @@
 id: custom-data-server
-title: Custom Data Server Feature for Syncfusion Pivot Table
+title: Syncfusion Pivot Table Data Server — Phase 1 Implementation
 type: feature
 schema: bugfix-feature
-status: exploring
+status: proposed
 
 capabilities:
-  - custom-data-server
+  - data-server-backend
 
 artifacts:
   exploration: EXPLORATION.md
@@ -13,7 +13,7 @@ artifacts:
   design: design.md
   tasks: tasks.md
   specs:
-    custom-data-server: specs/custom-data-server/spec.md
+    data-server-backend: specs/data-server-backend/spec.md
 
 created_at: 2024-12-19
 updated_at: 2024-12-19

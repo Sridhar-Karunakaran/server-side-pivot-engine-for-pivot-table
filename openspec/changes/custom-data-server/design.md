@@ -1,702 +1,718 @@
-# Custom Data Server Feature - Design
+# Syncfusion Pivot Data Server — Phase 1 Design
 
 **Date:** 2024-12-19
 
-**Approved By:** Pending User Review
+---
 
 ## Design Overview
 
-The Custom Data Server is implemented as an integrated layer within the existing ASP.NET Core PivotController, providing pluggable data connectivity with enterprise-grade security, performance optimization, and configuration management.
+The Syncfusion Pivot Data Server is implemented as a layered, service-oriented architecture within the existing ASP.NET Core application. All components integrate with the current `PivotController` structure while introducing new services and data providers that enable multi-source, multi-index data management.
 
-## Architectural Design
+---
 
-### Layer Architecture
+## Layer Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│          Presentation Layer (HTTP Endpoints)             │
-│              [Existing PivotController]                  │
-└──────────────────────┬───────────────────────────────────┘
+┌────────────────────────────────────────────────────┐
+│  HTTP Pipeline (Kestrel)                           │
+│  - Port configuration                              │
+│  - HTTPS/Protocols from settings                   │
+│  - CORS middleware (from Security.AllowedOrigins)  │
+│  - BasicAuth middleware (if Security.Enabled)     │
+└──────────────────────┬─────────────────────────────┘
                        │
-┌──────────────────────▼───────────────────────────────────┐
-│           Request Processing Pipeline                    │
-│  ┌────────────────┬───────────┬──────────────────────┐  │
-│  │ Authentication │ Request   │ Audit Logging        │  │
-│  │ Middleware     │ Routing   │                      │  │
-│  └────────────────┴───────────┴──────────────────────┘  │
-└──────────────────────┬───────────────────────────────────┘
+┌──────────────────────▼─────────────────────────────┐
+│  API Controllers                                   │
+│  - PivotController (/api/pivot/post)              │
+│  - ConfigController (/api/config/*)               │
+│  - IndexController (/api/indexes/*)               │
+│  - SecurityController (/api/security/users)       │
+│  - ReportsController (/api/reportsharing/*)       │
+│  - HealthController (/health)                     │
+└──────────────────────┬─────────────────────────────┘
                        │
-┌──────────────────────▼───────────────────────────────────┐
-│         Business Logic Layer                             │
-│  ┌────────────────┬─────────────┬────────────────────┐  │
-│  │Configuration   │ Authorization│ Query Optimization │  │
-│  │Management      │ & Access    │ Engine            │  │
-│  │                │ Control     │                    │  │
-│  └────────────────┴─────────────┴────────────────────┘  │
-└──────────────────────┬───────────────────────────────────┘
+┌──────────────────────▼─────────────────────────────┐
+│  Application Services                              │
+│  ├─ ConfigService (update orchestration)          │
+│  ├─ ConfigurationPersistenceService (load/save)   │
+│  ├─ ConfigurationFileWatcher (hot-reload)         │
+│  ├─ IndexManager (IIndexManager - cache hub)      │
+│  ├─ UserService (CRUD + hashing)                  │
+│  ├─ ReportSharingService (save/retrieve/quota)    │
+│  ├─ CertificateService (certificate resolution)   │
+│  └─ OriginValidator (CORS enforcement)            │
+└──────────────────────┬─────────────────────────────┘
                        │
-┌──────────────────────▼───────────────────────────────────┐
-│         Data Adapter Layer (Pluggable)                   │
-│  ┌─────────────┬──────────────┬─────────────────────┐   │
-│  │ Abstract    │              │                     │   │
-│  │ Data        │ Implementers │ Implementers        │   │
-│  │ Adapter     │   (Database) │ (REST API, Files)   │   │
-│  └─────────────┴──────────────┴─────────────────────┘   │
-└──────────────────────┬───────────────────────────────────┘
+┌──────────────────────▼─────────────────────────────┐
+│  Data Access Layer                                 │
+│  ├─ IDataSourceProvider (factory pattern)          │
+│  │  ├─ JsonDataProvider                           │
+│  │  ├─ CsvDataProvider                            │
+│  │  └─ DatabaseDataProvider                       │
+│  ├─ IDatabaseQueryProvider (abstraction)           │
+│  │  └─ SqliteQueryProvider (+ optional others)    │
+│  ├─ IIndexStore (metadata persistence)            │
+│  ├─ MemoryCache (SizeLimit: CacheSizeLimit)       │
+│  └─ RetryPolicy (exponential backoff)             │
+└──────────────────────┬─────────────────────────────┘
                        │
-┌──────────────────────▼───────────────────────────────────┐
-│         External Data Sources                            │
-│  • SQL Databases  • REST APIs  • File Systems           │
-│  • Cloud Storage  • Other Services                      │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────▼─────────────────────────────┐
+│  Persistence & Infrastructure                      │
+│  ├─ AtomicJsonStore (config/indexes/users)        │
+│  ├─ RollingFileLogger (JSON format, 30d retention)│
+│  ├─ FileSystemWatcher (config.json changes)       │
+│  └─ Problem Details Handler (RFC 7807)            │
+└────────────────────────────────────────────────────┘
 ```
 
-### Configuration Layer Architecture
+---
 
-```
-┌────────────────────────────────────┐
-│   ConfigurationService             │
-│   (Singleton)                      │
-│                                    │
-│  ┌──────────────────────────────┐ │
-│  │ General Settings             │ │
-│  │ • Server identifier          │ │
-│  │ • Performance tuning         │ │
-│  │ • Resource limits            │ │
-│  └──────────────────────────────┘ │
-│                                    │
-│  ┌──────────────────────────────┐ │
-│  │ Data Storage Settings        │ │
-│  │ • Source configurations      │ │
-│  │ • Cache strategies           │ │
-│  │ • Failover policies          │ │
-│  └──────────────────────────────┘ │
-│                                    │
-│  ┌──────────────────────────────┐ │
-│  │ Database Query Settings      │ │
-│  │ • Connection strings         │ │
-│  │ • Query timeouts             │ │
-│  │ • Result set limits          │ │
-│  └──────────────────────────────┘ │
-│                                    │
-│  ┌──────────────────────────────┐ │
-│  │ HTTPS Settings               │ │
-│  │ • Certificate configuration  │ │
-│  │ • Encryption policies        │ │
-│  │ • Certificate validation     │ │
-│  └──────────────────────────────┘ │
-│                                    │
-│  ┌──────────────────────────────┐ │
-│  │ Security Settings            │ │
-│  │ • Authentication schemes     │ │
-│  │ • Authorization policies     │ │
-│  │ • Field-level access rules   │ │
-│  └──────────────────────────────┘ │
-│                                    │
-│  ┌──────────────────────────────┐ │
-│  │ Report Sharing Settings      │ │
-│  │ • Report templates           │ │
-│  │ • Distribution rules         │ │
-│  │ • Scheduling                 │ │
-│  └──────────────────────────────┘ │
-└────────────────────────────────────┘
-```
+## Component Design
 
-### Security & Authorization Flow
+### 1. IndexManager (IIndexManager)
 
-```
-┌─────────────────────────────────────────────────────┐
-│ Client Request (with credentials)                   │
-└──────────────────┬──────────────────────────────────┘
-                   │
-                   ▼
-        ┌──────────────────────┐
-        │ Authentication       │
-        │ Middleware           │
-        │ (Validate token/key) │
-        └──────────┬───────────┘
-                   │
-             ┌─────▼─────┐
-             │ Valid?    │
-             └─────┬─────┘
-                   │
-    ┌──────────────┴──────────────┐
-    │ No                         Yes
-    ▼                            ▼
-  [401]              ┌─────────────────────┐
-  Unauthorized       │ Extract User Role   │
-                     │ & Context           │
-                     └──────────┬──────────┘
-                                │
-                                ▼
-                     ┌─────────────────────┐
-                     │ Authorization Layer │
-                     │ Check RBAC Rules    │
-                     └──────────┬──────────┘
-                                │
-                          ┌─────▼─────┐
-                          │ Authorized?
-                          └─────┬─────┘
-                                │
-                    ┌───────────┴──────────┐
-                    │ No                  Yes
-                    ▼                      ▼
-                  [403]        ┌───────────────────┐
-                Forbidden      │ Field-Level Access│
-                               │ Control Check     │
-                               └────────┬──────────┘
-                                        │
-                                        ▼
-                        ┌───────────────────────┐
-                        │ Apply Field Masking   │
-                        │ & Data Filters        │
-                        └────────┬──────────────┘
-                                 │
-                                 ▼
-                        ┌───────────────────┐
-                        │ Log Access Event  │
-                        │ (Audit Trail)     │
-                        └────────┬──────────┘
-                                 │
-                                 ▼
-                        ┌───────────────────┐
-                        │ Execute Query &   │
-                        │ Return Results    │
-                        └───────────────────┘
-```
+**Responsibility:** Central cache hub for all index data; manages index lifecycle
 
-## Detailed Component Design
-
-### 1. Configuration Management
-
-**Namespace:** `PivotController.DataServer.Configuration`
-
-#### Classes
-
+**Key Methods:**
 ```csharp
-// General Settings
-public class GeneralSettings
-{
-    public string ServerId { get; set; }
-    public string Environment { get; set; }
-    public int MaxConcurrentRequests { get; set; }
-    public int QueryTimeoutSeconds { get; set; }
-    public int MaxResultSetSize { get; set; }
-}
-
-// Data Storage Settings
-public class DataStorageSettings
-{
-    public DataSourceConfiguration[] Sources { get; set; }
-    public CacheStrategy DefaultCacheStrategy { get; set; }
-    public bool EnableIncrementalLoad { get; set; }
-    public int CacheExpirationMinutes { get; set; }
-}
-
-public class DataSourceConfiguration
-{
-    public string Name { get; set; }
-    public string Type { get; set; } // "Database", "RestAPI", "File", "Cloud"
-    public Dictionary<string, string> ConnectionSettings { get; set; }
-    public bool IsPrimary { get; set; }
-    public string[] FailoverSources { get; set; }
-}
-
-// Database Query Settings
-public class DatabaseQuerySettings
-{
-    public Dictionary<string, QueryConfiguration> Queries { get; set; }
-    public bool AllowCustomQueries { get; set; }
-    public int DefaultPageSize { get; set; }
-    public int MaxPageSize { get; set; }
-    public int QueryTimeoutSeconds { get; set; }
-}
-
-public class QueryConfiguration
-{
-    public string Name { get; set; }
-    public string QueryText { get; set; }
-    public string[] AllowedParameters { get; set; }
-    public bool RequiresAuthentication { get; set; }
-}
-
-// HTTPS Settings
-public class HttpsSettings
-{
-    public bool Enabled { get; set; }
-    public string CertificatePath { get; set; }
-    public string CertificatePassword { get; set; }
-    public bool EnforceCertificateValidation { get; set; }
-    public string[] TrustedCertificateThumbprints { get; set; }
-}
-
-// Security Settings
-public class SecuritySettings
-{
-    public AuthenticationScheme[] AuthenticationSchemes { get; set; }
-    public AuthorizationPolicy[] AuthorizationPolicies { get; set; }
-    public FieldLevelAccessRule[] FieldAccessRules { get; set; }
-    public bool EnableAuditLogging { get; set; }
-    public string AuditLogPath { get; set; }
-}
-
-public class AuthenticationScheme
-{
-    public string Type { get; set; } // "ApiKey", "OAuth2", "Basic", "JWT"
-    public Dictionary<string, string> Configuration { get; set; }
-}
-
-public class AuthorizationPolicy
-{
-    public string Role { get; set; }
-    public string[] AllowedActions { get; set; }
-    public string[] AllowedDataSources { get; set; }
-}
-
-public class FieldLevelAccessRule
-{
-    public string FieldName { get; set; }
-    public string[] AllowedRoles { get; set; }
-    public bool MaskUnauthorized { get; set; }
-    public string MaskValue { get; set; }
-}
-
-// Report Sharing Settings
-public class ReportSharingSettings
-{
-    public ReportTemplate[] Templates { get; set; }
-    public bool EnableScheduledReports { get; set; }
-    public NotificationRule[] NotificationRules { get; set; }
-    public ReportAccessPolicy[] AccessPolicies { get; set; }
-}
-
-public class ReportTemplate
-{
-    public string Id { get; set; }
-    public string Name { get; set; }
-    public string Description { get; set; }
-    public Dictionary<string, object> PivotConfiguration { get; set; }
-    public string CreatedBy { get; set; }
-    public DateTime CreatedDate { get; set; }
-}
-
-// Configuration Service (Singleton)
-public interface ICustomDataServerConfiguration
-{
-    GeneralSettings GeneralSettings { get; }
-    DataStorageSettings DataStorageSettings { get; }
-    DatabaseQuerySettings DatabaseQuerySettings { get; }
-    HttpsSettings HttpsSettings { get; }
-    SecuritySettings SecuritySettings { get; }
-    ReportSharingSettings ReportSharingSettings { get; }
-    
-    void LoadFromAppSettings(IConfiguration config);
-    void Validate();
-}
+Task<IReadOnlyList<ExpandoObject>> GetDataAsync(string indexName, CancellationToken ct)
+Task<IndexStatus> CreateIndexAsync(IndexDefinition definition, CancellationToken ct)
+Task<IndexStatus> EditIndexAsync(string indexName, IndexDefinition patch, CancellationToken ct)
+Task<IndexStatus> ReloadIndexAsync(string indexName, CancellationToken ct)
+Task<IndexStatus> EnableIndexAsync(string indexName, CancellationToken ct)
+Task<IndexStatus> DisableIndexAsync(string indexName, CancellationToken ct)
+Task DeleteIndexAsync(string indexName)
+IndexStatus GetIndexStatus(string indexName)
+IReadOnlyList<IndexStatus> ListIndexes()
 ```
 
-### 2. Data Adapter Pattern
+**Cache Keys:**
+- Data: `data:{index}` (one slot per index)
+- Engine: `engine:{index}:{parameter.Hash}` (existing pattern, prefixed by index)
 
-**Namespace:** `PivotController.DataServer.Adapters`
+**Status Values:** `Ready | Refreshing | Failed | Disabled`
 
-#### Classes
+**Key Features:**
+- Per-index SemaphoreSlim for concurrent reload protection
+- Keep-data-on-refresh: dual-slot cache entry (current + new)
+- Auto-reload via PeriodicTimer per index
+- Retry policy on transient failures
 
+### 2. Data Provider Pattern
+
+**Interface Hierarchy:**
 ```csharp
-// Query Request/Response
-public class DataQueryRequest
+public interface IDataSourceProvider
 {
-    public string QueryName { get; set; }
-    public Dictionary<string, object> Parameters { get; set; }
-    public int PageNumber { get; set; }
-    public int PageSize { get; set; }
-    public string[] FilterFields { get; set; }
-    public Dictionary<string, object> FilterValues { get; set; }
-    public string[] SortFields { get; set; }
-    public bool[] SortDescending { get; set; }
+    Task<IReadOnlyList<ExpandoObject>> LoadAsync(
+        IndexDefinition definition, 
+        DatabaseQuerySettings querySettings,
+        CancellationToken ct);
 }
 
-public class DataQueryResponse
+// Implementations
+public class JsonDataProvider : IDataSourceProvider
+public class CsvDataProvider : IDataSourceProvider
+public class DatabaseDataProvider : IDataSourceProvider
+
+// Database-specific
+public interface IDatabaseQueryProvider
 {
-    public object[] Rows { get; set; }
-    public int TotalRowCount { get; set; }
-    public int PageNumber { get; set; }
-    public int PageSize { get; set; }
-    public Dictionary<string, object> Metadata { get; set; }
-    public DateTime QueryExecutedAt { get; set; }
-    public int ExecutionTimeMs { get; set; }
+    DataSourceType SourceType { get; }
+    DbConnection CreateConnection(string connectionString);
 }
 
-// Abstract Data Adapter
-public abstract class DataAdapter
-{
-    protected string Name { get; set; }
-    protected Dictionary<string, string> ConnectionSettings { get; set; }
-    
-    public abstract Task<DataQueryResponse> ExecuteQueryAsync(
-        DataQueryRequest request,
-        CancellationToken cancellationToken = default);
-    
-    public abstract Task<Dictionary<string, string>> GetFieldMetadataAsync(
-        CancellationToken cancellationToken = default);
-    
-    public abstract Task<bool> VerifyConnectionAsync(
-        CancellationToken cancellationToken = default);
-    
-    public abstract void Dispose();
-}
-
-// Database Adapter Implementation
-public class DatabaseAdapter : DataAdapter
-{
-    private readonly ILogger<DatabaseAdapter> _logger;
-    private IDbConnection _connection;
-    
-    public DatabaseAdapter(
-        string name,
-        Dictionary<string, string> settings,
-        ILogger<DatabaseAdapter> logger)
-    {
-        Name = name;
-        ConnectionSettings = settings;
-        _logger = logger;
-    }
-    
-    public override async Task<DataQueryResponse> ExecuteQueryAsync(
-        DataQueryRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        // Implementation details in spec.md
-    }
-    
-    public override async Task<Dictionary<string, string>> GetFieldMetadataAsync(
-        CancellationToken cancellationToken = default)
-    {
-        // Implementation details in spec.md
-    }
-    
-    public override async Task<bool> VerifyConnectionAsync(
-        CancellationToken cancellationToken = default)
-    {
-        // Implementation details in spec.md
-    }
-    
-    public override void Dispose()
-    {
-        _connection?.Dispose();
-    }
-}
-
-// REST API Adapter Implementation
-public class RestApiAdapter : DataAdapter
-{
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<RestApiAdapter> _logger;
-    
-    public RestApiAdapter(
-        string name,
-        Dictionary<string, string> settings,
-        HttpClient httpClient,
-        ILogger<RestApiAdapter> logger)
-    {
-        Name = name;
-        ConnectionSettings = settings;
-        _httpClient = httpClient;
-        _logger = logger;
-    }
-    
-    public override async Task<DataQueryResponse> ExecuteQueryAsync(
-        DataQueryRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        // Implementation details in spec.md
-    }
-    
-    public override async Task<Dictionary<string, string>> GetFieldMetadataAsync(
-        CancellationToken cancellationToken = default)
-    {
-        // Implementation details in spec.md
-    }
-    
-    public override async Task<bool> VerifyConnectionAsync(
-        CancellationToken cancellationToken = default)
-    {
-        // Implementation details in spec.md
-    }
-    
-    public override void Dispose()
-    {
-        _httpClient?.Dispose();
-    }
-}
-
-// Adapter Factory
-public interface IDataAdapterFactory
-{
-    DataAdapter CreateAdapter(DataSourceConfiguration sourceConfig);
-}
-
-public class DataAdapterFactory : IDataAdapterFactory
-{
-    private readonly IServiceProvider _serviceProvider;
-    private readonly ILogger<DataAdapterFactory> _logger;
-    
-    public DataAdapterFactory(IServiceProvider serviceProvider, ILogger<DataAdapterFactory> logger)
-    {
-        _serviceProvider = serviceProvider;
-        _logger = logger;
-    }
-    
-    public DataAdapter CreateAdapter(DataSourceConfiguration sourceConfig)
-    {
-        // Implementation details in spec.md
-    }
-}
+public class SqliteQueryProvider : IDatabaseQueryProvider
+// Optional: SqlServerQueryProvider, PostgresqlQueryProvider, MySqlQueryProvider, OracleQueryProvider, MariadbQueryProvider
 ```
 
-### 3. Security & Authentication Layer
-
-**Namespace:** `PivotController.DataServer.Security`
-
-#### Classes
-
+**Factory Pattern:**
 ```csharp
-// Authentication Context
-public class DataAccessContext
+public class DataSourceProviderFactory
 {
-    public string UserId { get; set; }
-    public string[] Roles { get; set; }
-    public Dictionary<string, object> Claims { get; set; }
-    public DateTime AuthenticationTime { get; set; }
-    public bool IsAuthenticated => !string.IsNullOrEmpty(UserId);
-}
-
-// Authentication Service
-public interface IAuthenticationService
-{
-    Task<DataAccessContext> AuthenticateAsync(
-        HttpContext httpContext,
-        CancellationToken cancellationToken = default);
-}
-
-public class AuthenticationService : IAuthenticationService
-{
-    private readonly ICustomDataServerConfiguration _config;
-    private readonly ILogger<AuthenticationService> _logger;
-    
-    public async Task<DataAccessContext> AuthenticateAsync(
-        HttpContext httpContext,
-        CancellationToken cancellationToken = default)
+    public IDataSourceProvider CreateProvider(DataSourceType sourceType)
     {
-        // Implementation details in spec.md
-    }
-}
-
-// Authorization Service
-public interface IAuthorizationService
-{
-    Task<bool> AuthorizeAsync(
-        DataAccessContext context,
-        string action,
-        string dataSource,
-        CancellationToken cancellationToken = default);
-    
-    Task<string[]> GetAccessibleFieldsAsync(
-        DataAccessContext context,
-        string[] requestedFields,
-        CancellationToken cancellationToken = default);
-}
-
-public class AuthorizationService : IAuthorizationService
-{
-    private readonly ICustomDataServerConfiguration _config;
-    private readonly ILogger<AuthorizationService> _logger;
-    
-    public async Task<bool> AuthorizeAsync(
-        DataAccessContext context,
-        string action,
-        string dataSource,
-        CancellationToken cancellationToken = default)
-    {
-        // Implementation details in spec.md
-    }
-    
-    public async Task<string[]> GetAccessibleFieldsAsync(
-        DataAccessContext context,
-        string[] requestedFields,
-        CancellationToken cancellationToken = default)
-    {
-        // Implementation details in spec.md
-    }
-}
-
-// Audit Logger
-public interface IAuditLogger
-{
-    Task LogAccessAsync(
-        DataAccessContext context,
-        string action,
-        string resource,
-        bool success,
-        string details = null);
-}
-
-public class AuditLogger : IAuditLogger
-{
-    private readonly ICustomDataServerConfiguration _config;
-    private readonly ILogger<AuditLogger> _logger;
-    
-    public async Task LogAccessAsync(
-        DataAccessContext context,
-        string action,
-        string resource,
-        bool success,
-        string details = null)
-    {
-        // Implementation details in spec.md
-    }
-}
-```
-
-### 4. Integration with PivotController
-
-**Affected File:** `PivotController/Controllers/PivotController.cs`
-
-#### Changes Required
-
-1. Inject new services:
-   - `ICustomDataServerConfiguration`
-   - `IAuthenticationService`
-   - `IAuthorizationService`
-   - `IDataAdapterFactory`
-   - `IAuditLogger`
-
-2. Add security middleware call in request pipeline
-
-3. Modify `GetData()` method to use data adapters
-
-4. Add new action handlers for custom data server operations
-
-5. Maintain backward compatibility with existing method signatures
-
-## Configuration File Structure
-
-**File:** `appsettings.json` and `appsettings.Development.json`
-
-```json
-{
-  "CustomDataServer": {
-    "GeneralSettings": {
-      "ServerId": "pivot-ds-001",
-      "Environment": "Development",
-      "MaxConcurrentRequests": 100,
-      "QueryTimeoutSeconds": 30,
-      "MaxResultSetSize": 1000000
-    },
-    "DataStorageSettings": {
-      "Sources": [
+        return sourceType switch
         {
-          "Name": "PrimarySqlServer",
-          "Type": "Database",
-          "IsPrimary": true,
-          "ConnectionSettings": {
-            "Provider": "SqlServer",
-            "ConnectionString": "Server=localhost;Database=PivotData;..."
-          }
-        }
-      ],
-      "DefaultCacheStrategy": "Memory",
-      "EnableIncrementalLoad": true,
-      "CacheExpirationMinutes": 60
-    },
-    "DatabaseQuerySettings": {
-      "DefaultPageSize": 1000,
-      "MaxPageSize": 10000,
-      "QueryTimeoutSeconds": 30,
-      "AllowCustomQueries": false
-    },
-    "HttpsSettings": {
-      "Enabled": true,
-      "CertificatePath": "/etc/ssl/certs/server.pfx",
-      "EnforceCertificateValidation": true
-    },
-    "SecuritySettings": {
-      "AuthenticationSchemes": [
-        {
-          "Type": "ApiKey",
-          "Configuration": {
-            "HeaderName": "X-API-Key",
-            "ValidKeys": ["key1", "key2"]
-          }
-        }
-      ],
-      "EnableAuditLogging": true,
-      "AuditLogPath": "/var/log/pivot-audit.log"
-    },
-    "ReportSharingSettings": {
-      "EnableScheduledReports": false
+            DataSourceType.Json => _jsonProvider,
+            DataSourceType.Csv => _csvProvider,
+            DataSourceType.SqlServer | DataSourceType.PostgreSQL | ... => _dbProvider,
+            _ => throw InvalidOperationException("Unsupported source type")
+        };
     }
-  }
 }
 ```
 
-## Service Registration Pattern
+### 3. Configuration Service
 
-**File:** `Program.cs`
-
-```csharp
-// Add Custom Data Server services
-builder.Services.AddScoped<ICustomDataServerConfiguration, CustomDataServerConfiguration>();
-builder.Services.AddScoped<IAuthenticationService, AuthenticationService>();
-builder.Services.AddScoped<IAuthorizationService, AuthorizationService>();
-builder.Services.AddScoped<IAuditLogger, AuditLogger>();
-builder.Services.AddScoped<IDataAdapterFactory, DataAdapterFactory>();
-builder.Services.AddScoped<IDataServerRequestHandler, DataServerRequestHandler>();
-
-// Add custom data server middleware
-app.UseCustomDataServerAuthentication();
-app.UseCustomDataServerAuditLogging();
+**ConfigService Orchestration:**
+```
+User calls PUT /api/config
+  ↓
+ConfigController.UpdateConfig(patch)
+  ↓
+ConfigService.UpdateAsync(patch)
+  ├─ Merge patch into current config
+  ├─ Validate merged config (ConfigurationValidator)
+  ├─ Persist to DataServer/config.json (atomic write)
+  ├─ Apply runtime changes (per-option rules)
+  └─ Return { config, requiresRestart }
 ```
 
-## Error Handling Strategy
+**Per-Option Rules:**
+- **Runtime Apply:** Security settings, ReportSharing.Enabled, MinimumLogLevel, DatabaseQuery.*, Indexes
+- **Requires Restart:** General.Port, General.DataFolder, Https.*, DataStorage.CacheSizeLimit
 
-1. **Authentication Failures:** Return 401 Unauthorized
-2. **Authorization Failures:** Return 403 Forbidden
-3. **Configuration Errors:** Return 500 with details in development
-4. **Query Errors:** Return 400 Bad Request with validation details
-5. **Connection Failures:** Return 503 Service Unavailable with retry hint
-6. **Timeout:** Return 504 Gateway Timeout
+### 4. Configuration Persistence
 
-## Testing Strategy
+**AtomicJsonStore:**
+```csharp
+public class AtomicJsonStore
+{
+    // Atomic write with temp-file-rename
+    public void Save<T>(string filePath, T obj, JsonSerializerOptions? options = null)
+    {
+        var tempFile = filePath + ".tmp";
+        File.WriteAllText(tempFile, JsonSerializer.Serialize(obj, options));
+        File.Replace(tempFile, filePath, filePath + ".corrupt." + Timestamp);
+    }
+    
+    // Load with corruption handling
+    public T Load<T>(string filePath, T defaultValue)
+    {
+        try { return JsonSerializer.Deserialize<T>(File.ReadAllText(filePath)); }
+        catch (Exception ex)
+        {
+            Logger.Error($"Corrupt file {filePath}, quarantined");
+            File.Move(filePath, filePath + ".corrupt." + Timestamp);
+            return defaultValue;
+        }
+    }
+}
+```
 
-1. **Unit Tests**
-   - Configuration validation
-   - Authentication and authorization logic
-   - Adapter pattern implementations
+**Files Managed:**
+- `DataServer/config.json` — All 7 settings sections + Indexes
+- `DataServer/indexes.json` — Index metadata only
+- `DataServer/users.json` — User list (username, hash, timestamps)
+- `DataServer/reports/*.json` — Report payloads
+- `DataServer/reports/*.meta.json` — Report metadata
 
-2. **Integration Tests**
-   - Full request pipeline with security
-   - Database adapter with test database
-   - API adapter with mocked endpoints
+### 5. Security Layer
 
-3. **Security Tests**
-   - SQL injection prevention
-   - Unauthorized access attempts
-   - Audit logging verification
+**User Model:**
+```csharp
+public class User
+{
+    public string Username { get; set; }
+    public string PasswordHash { get; set; } // PBKDF2$100000$SHA256$saltB64$hashB64
+    public DateTime CreatedAt { get; set; }
+    public DateTime UpdatedAt { get; set; }
+}
+```
 
-4. **Performance Tests**
-   - Large dataset pagination
-   - Query optimization verification
-   - Cache effectiveness
+**Password Hashing (PBKDF2, built-in):**
+```csharp
+public class PBKDF2PasswordHasher
+{
+    public string Hash(string password, int iterations = 100000)
+    {
+        // Generate random salt
+        byte[] salt = new byte[16];
+        using (var rng = RandomNumberGenerator.Create())
+            rng.GetBytes(salt);
+        
+        // Hash with PBKDF2
+        using (var pbkdf2 = new Rfc2898DeriveBytes(password, salt, iterations, HashAlgorithmName.SHA256))
+        {
+            byte[] hash = pbkdf2.GetBytes(32);
+            return $"PBKDF2${iterations}$SHA256${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
+        }
+    }
+    
+    public bool Verify(string password, string hash)
+    {
+        var parts = hash.Split('$');
+        // Constant-time comparison
+        return ConstantTimeComparer.Compare(ComputeHash(password, parts), hash);
+    }
+}
+```
 
-## Backward Compatibility
+**Basic Auth Middleware:**
+```
+Request with Authorization header
+  ├─ Decode Base64
+  ├─ Split on first ':'
+  ├─ Lookup user
+  ├─ Verify password (constant-time)
+  └─ Set ClaimsPrincipal or return 401
+```
 
-1. Existing pivot endpoint remains unchanged
-2. Legacy data source loading methods continue working
-3. New features are opt-in via configuration
-4. Gradual migration path available
+**CORS Origin Validator:**
+- AllowedOrigins=["*"] → AllowAnyOrigin
+- Otherwise, exact match against list
+- No-Origin requests rejected (CSRF defense)
 
-## References
+### 6. Index Configuration Bootstrap
 
-- EXPLORATION.md - Requirements and context
-- proposal.md - Feature scope and capabilities
-- specs/custom-data-server/spec.md - Detailed technical specifications
+**Startup Sequence (Program.cs):**
+```csharp
+// Step 1: Ensure persistence files exist
+await ConfigurationPersistenceService.EnsureFilesAsync();
+
+// Step 2: Load/validate configuration
+var config = await ConfigurationPersistenceService.LoadAsync();
+
+// Step 3: One-time legacy migration
+if (LegacyPivotDataSourceExists)
+{
+    var defaultIndex = MigrateToDefaultIndex();
+    config.Indexes.Add(defaultIndex);
+    await ConfigurationPersistenceService.SaveAsync(config);
+}
+
+// Step 4: Register all enabled indexes
+await IndexManager.RegisterAllAsync(config.Indexes);
+
+// Step 5: Configure Kestrel
+builder.WebHost.ConfigureKestrel((context, options) =>
+{
+    options.Listen(IPAddress.Any, config.General.Port, listenOptions =>
+    {
+        if (config.Https.Enabled)
+        {
+            var cert = CertificateService.ResolveCertificate(config.Https);
+            listenOptions.UseHttps(cert);
+        }
+        listenOptions.Protocols = config.Https.Protocols.ToHttpProtocols();
+    });
+});
+
+// Step 6: Configure services
+builder.Services.AddSingleton(config);
+builder.Services.AddScoped<IIndexManager>(sp => new IndexManager(
+    cache: sp.GetRequiredService<IMemoryCache>(),
+    config: sp.GetRequiredService<DataServerConfiguration>(),
+    factory: sp.GetRequiredService<DataSourceProviderFactory>(),
+    logger: sp.GetRequiredService<ILogger<IndexManager>>()
+));
+```
+
+### 7. Hot-Reload Configuration Watcher
+
+**ConfigurationFileWatcher:**
+```csharp
+public class ConfigurationFileWatcher : IHostedService
+{
+    public async Task StartAsync(CancellationToken ct)
+    {
+        var watcher = new FileSystemWatcher(Path.Combine(AppContext.BaseDirectory, "DataServer"))
+        {
+            Filter = "config.json",
+            NotifyFilter = NotifyFilters.LastWrite
+        };
+        
+        watcher.Changed += async (s, e) =>
+        {
+            // Debounce: wait 500ms for editor write operations to complete
+            await Task.Delay(500, ct);
+            
+            // Load and validate new config
+            var newConfig = AtomicJsonStore.Load<DataServerConfiguration>(e.FullPath, _currentConfig);
+            
+            if (newConfig == null || newConfig.ConfigVersion != "1.0")
+            {
+                Logger.Error("Invalid config.json; reverting to last-known-good");
+                return;
+            }
+            
+            // Compute delta
+            var delta = ComputeDelta(_currentConfig, newConfig);
+            
+            // Apply runtime-applicable options
+            foreach (var change in delta)
+            {
+                var requiresRestart = !ApplyRuntime(change);
+                if (requiresRestart)
+                    Logger.Warn($"Setting {change.Key} requires restart to take effect");
+            }
+            
+            _currentConfig = newConfig;
+            Logger.Info($"Config reloaded: applied {delta.Count} changes");
+        };
+        
+        watcher.EnableRaisingEvents = true;
+    }
+}
+```
+
+### 8. Index Lifecycle
+
+**Create Index:**
+```
+POST /api/indexes { index, name, sourceType, ... }
+  ├─ Validate definition
+  ├─ Check uniqueness (index name)
+  ├─ Persist metadata to indexes.json (atomic)
+  ├─ Create provider by sourceType
+  ├─ LoadAsync(def, timeout) with retry
+  │  ├─ Success → Set(data:{index}, rows) → 201 { status: Ready, rowCount }
+  │  ├─ Transient → Retry (backoff, ≤ RetryAttempts)
+  │  └─ Persistent → 502 { status: Failed, lastError }
+  └─ Return IndexStatus
+```
+
+**Edit Index:**
+```
+PUT /api/indexes/{index} { ...patch... }
+  ├─ Load current definition
+  ├─ sourceType changed? → 422 (immutable)
+  ├─ Merge patch (all fields except sourceType)
+  ├─ Persist metadata → Reload(index) semantics → 200
+  └─ Return IndexStatus
+```
+
+**Reload Index:**
+```
+POST /api/indexes/{index}/reload
+  ├─ Acquire per-index SemaphoreSlim
+  ├─ If KeepDataOnRefresh: Pin old cache entry
+  ├─ LoadAsync(def, timeout) with retry
+  │  ├─ Success → Atomic cache swap
+  │  └─ Failure && KeepDataOnRefresh → Log error; serve old data
+  ├─ Return 200 { status: Ready/Failed, rowCount, lastError }
+  └─ Release semaphore
+```
+
+**Enable/Disable Index:**
+```
+POST /api/indexes/{index}/disable
+  ├─ Evict data:{index} and engine:{index}:*
+  ├─ Mark metadata Enabled=false
+  ├─ Persist to indexes.json
+  └─ Return 200 { status: Disabled }
+
+POST /api/indexes/{index}/enable
+  ├─ Mark metadata Enabled=true
+  ├─ Persist to indexes.json
+  ├─ LoadAsync(...) with retry
+  └─ Return 200 { status: Ready/Failed, rowCount }
+```
+
+### 9. Database Query Processing
+
+**Provider Abstraction:**
+```csharp
+public interface IDatabaseQueryProvider
+{
+    DataSourceType SourceType { get; }
+    DbConnection CreateConnection(string connectionString);
+}
+
+// Implementation
+public class SqliteQueryProvider : IDatabaseQueryProvider
+{
+    public DbConnection CreateConnection(string connectionString)
+        => new SqliteConnection(connectionString);
+}
+```
+
+**Query Execution Pipeline:**
+```
+Validate Query (single SELECT, no ';')
+  ↓
+Resolve ConnectionString (from config:ConnectionStrings or user-secrets)
+  ↓
+OpenAsync(timeout budget starts; retried per policy)
+  ↓
+CommandTimeout = DatabaseQuery.CommandTimeLimit (when enabled; 0 = infinite)
+  ↓
+ExecuteReaderAsync(ct)
+  ├─ Timeout → Cancel command → DatabaseTimeoutException → Retry logic
+  ├─ Transient → Retry (backoff)
+  └─ Success → Map to IReadOnlyList<ExpandoObject>
+    ├─ Validate headers (no duplicates, no blanks)
+    ├─ Convert types per Mapping (if enabled)
+    └─ Return rows
+```
+
+### 10. Report Sharing Architecture
+
+**Storage Layout:**
+```
+DataServer/reports/
+├── {reportId}.json           # report payload
+├── {reportId}.meta.json      # { reportId, name, owner, createdAt, expiresAt, sizeBytes }
+└── .quota                    # { currentBytes }
+```
+
+**Expiry & Quota Sweep (BackgroundService):**
+```csharp
+public class ReportSweepWorker : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            if (_config.ReportSharing.AutoDelete)
+            {
+                // Every 5 minutes
+                var expired = LoadReportMetadata().Where(m => m.ExpiresAt < DateTime.UtcNow);
+                foreach (var report in expired)
+                    DeleteReport(report.ReportId);
+                
+                // Enforce quota: evict oldest first
+                if (_config.ReportSharing.MaxFolderSizeMB > 0)
+                {
+                    var currentBytes = CalculateFolderSize();
+                    var maxBytes = _config.ReportSharing.MaxFolderSizeMB * 1024 * 1024;
+                    
+                    if (currentBytes > maxBytes)
+                    {
+                        var toDelete = SortByCreatedAt().Take(/* count to free space */);
+                        foreach (var report in toDelete)
+                            DeleteReport(report.ReportId);
+                    }
+                }
+            }
+            
+            await Task.Delay(TimeSpan.FromMinutes(5), ct);
+        }
+    }
+}
+```
+
+**Read Semantics:**
+```
+GET /api/reportsharing/reports/{reportId}
+  ├─ Load metadata
+  ├─ ExpiresAt < now? → 410 Gone (file left if AutoDelete=false)
+  ├─ Load payload
+  └─ Return 200
+```
+
+### 11. PivotController Index-Aware Routing
+
+**Modified POST Handler:**
+```csharp
+[HttpPost("post")]
+public async Task<object> Post([FromBody] object args)
+{
+    var param = JsonConvert.DeserializeObject<FetchData>(args.ToString());
+    
+    // NEW: Extract index from FetchData; fall back to DefaultIndexId
+    string indexName = param.Index ?? _config.DefaultIndexId;
+    
+    // Resolve index
+    var indexStatus = _indexManager.GetIndexStatus(indexName);
+    if (indexStatus == null)
+        return Problem(status: 404, detail: $"Index '{indexName}' not found");
+    if (indexStatus.Status == IndexStatus.Disabled)
+        return Problem(status: 423, detail: "Index is disabled");
+    
+    // Get data for this index (existing logic, prefixed by index)
+    var data = await _indexManager.GetDataAsync(indexName, ct);
+    
+    // Continue with existing pivot processing
+    _pivotEngine.Data = data;
+    EngineProperties engine = await GetEngine(param, indexName);  // prefix cache key
+    
+    // ... existing switch(param.Action) ...
+}
+
+// Helper to prefix cache keys
+private async Task<EngineProperties> GetEngine(FetchData param, string indexName)
+{
+    var cacheKey = $"engine:{indexName}:{param.Hash}";  // NEW: index prefix
+    return await _cache.GetOrCreateAsync(cacheKey, async (entry) =>
+    {
+        // ... existing logic ...
+    });
+}
+```
+
+### 12. Error Handling (RFC 7807 Problem Details)
+
+**Exception Filter:**
+```csharp
+public class DataServerExceptionFilter : IExceptionFilter
+{
+    public void OnException(ExceptionContext context)
+    {
+        var problem = new ProblemDetails
+        {
+            Type = "https://dataserver.local/errors/" + ex.GetType().Name,
+            Title = ex.GetType().Name,
+            Detail = ex.Message,
+            Status = MapExceptionToStatus(ex),
+            Extensions = new Dictionary<string, object>
+            {
+                { "category", ex is ConfigException ? "Config" : "General" },
+                { "correlationId", context.HttpContext.TraceIdentifier }
+            }
+        };
+        
+        if (ex is ValidationException valEx)
+            problem.Extensions["errors"] = valEx.Errors;  // field-level details
+        
+        context.Result = new ObjectResult(problem) { StatusCode = problem.Status };
+    }
+}
+```
+
+### 13. Logging Infrastructure
+
+**Rolling File Logger:**
+```csharp
+public class RollingFileLoggerProvider : ILoggerProvider
+{
+    // Logs to logs/dataserver-{yyyyMMdd}.jsonl
+    // 30-day retention
+    // JSON format: { timestamp, level, category, message, correlationId, ... }
+}
+```
+
+**Log Categories:**
+```
+DataServer.Config
+DataServer.Security
+DataServer.Indexing
+DataServer.DatabaseQuery
+DataServer.ReportSharing
+DataServer.Https
+DataServer.Pivot
+```
+
+**Minimum Level Filter:** Driven by `General.MinimumLogLevel` (Info/Warn/Error/Fatal); framework logs pinned to Warning.
+
+---
+
+## File-by-File Changes
+
+### Modified Files
+
+1. **Program.cs**
+   - Bootstrap configuration and index registration
+   - Kestrel configuration (port, HTTPS, protocols)
+   - CORS setup from Security.AllowedOrigins
+   - DI registration of all managers and services
+   - Health endpoint
+   - Logging configuration with rolling file provider
+   - Cache sizing from DataStorage.CacheSizeLimit
+
+2. **Controllers/PivotController.cs**
+   - Extract `FetchData.Index`
+   - Route to `IIndexManager`
+   - Prefix cache keys with index
+   - Handle 404/423 responses
+
+3. **appsettings.json**
+   - Add `DataServer` section
+   - Keep legacy `PivotDataSource` for one-time migration
+
+4. **Sample/pivot.js** (final step)
+   - Define `PIVOT_INDEX` constant
+   - Pass `index` field in every request
+
+### New Files (~40 total)
+
+**Configuration/**
+- `Models/DataServerConfiguration.cs` (root model with all 7 sections)
+- `Models/GeneralSettings.cs`, `DataStorageSettings.cs`, etc.
+- `Models/IndexDefinition.cs`, `IndexFieldMapping.cs`
+- `Validation/ConfigurationValidator.cs` (per-section and cross-field rules)
+- `Services/ConfigurationService.cs` (update orchestration)
+- `Services/ConfigurationPersistenceService.cs` (load/save atomic)
+- `Services/ConfigurationFileWatcher.cs` (hot-reload, file watching)
+- `Controllers/ConfigController.cs` (GET /api/config, PUT /api/config)
+
+**Core/**
+- `Persistence/AtomicJsonStore.cs` (atomic writes)
+- `Persistence/JsonFileRepository.cs` (user and index repositories)
+- `Retry/RetryPolicy.cs` (exponential backoff)
+- `Security/PBKDF2PasswordHasher.cs`
+- `Security/ConstantTimeComparer.cs`
+- `Security/OriginValidator.cs`
+- `Security/PivotBasicAuthMiddleware.cs`
+- `Http/DataServerExceptionFilter.cs` (exception → problem details)
+- `Logging/RollingFileLoggerProvider.cs`
+
+**Indexing/**
+- `IIndexManager.cs` / `IndexManager.cs` (cache hub, lifecycle)
+- `IndexStatus.cs` (enum and status model)
+- `IndexReloadWorker.cs` (BackgroundService for auto-reload)
+- `PivotEngineCache.cs` (cache key prefixing)
+
+**Data/Providers/**
+- `IDataSourceProvider.cs` (interface)
+- `JsonDataProvider.cs`
+- `CsvDataProvider.cs` (with separator handling)
+- `DatabaseDataProvider.cs`
+- `IDatabaseQueryProvider.cs` (interface)
+- `SqliteQueryProvider.cs` (mandatory)
+- `SqlServerQueryProvider.cs` (optional stub)
+- `PostgresqlQueryProvider.cs` (optional stub)
+- `MySqlQueryProvider.cs` (optional stub)
+- `OracleQueryProvider.cs` (optional stub)
+- `MariadbQueryProvider.cs` (optional stub)
+- `DataSourceProviderFactory.cs`
+
+**Security/**
+- `Controllers/SecurityController.cs` (user management)
+- `Services/UserService.cs` (CRUD, hashing, verification)
+
+**Reports/**
+- `Services/ReportSharingService.cs` (save/get/delete/expire)
+- `Services/ReportSweepWorker.cs` (expiry/quota background worker)
+- `Controllers/ReportsController.cs` (API endpoints)
+- `Models/ReportMetadata.cs`
+
+**DataServer/** (runtime; gitignored)
+- `config.json`
+- `indexes.json`
+- `users.json`
+- `reports/` (directory)
+
+---
+
+## Integration Points
+
+### With Existing PivotController
+- `FetchData` deserialization unchanged (added optional `Index` field)
+- Pivot cache keys prefixed with index name
+- Existing pivot actions (fetchFieldMembers, fetchRawData, exports) routed via IndexManager
+
+### With Program.cs
+- New service registration (IIndexManager, ConfigService, UserService, etc.)
+- New middleware (BasicAuth)
+- New background workers (IndexReloadWorker, ReportSweepWorker)
+- New exception filter (DataServerExceptionFilter)
+
+### With ASP.NET Core
+- Built-in MemoryCache with SizeLimit
+- Built-in ProblemDetails (RFC 7807)
+- Built-in X509Certificate2 and Kestrel HTTPS
+- Built-in FileSystemWatcher
+- Built-in Logging (Console + custom RollingFileLogger)
+
+---
+
+## Design Decisions & Rationale
+
+1. **IndexManager as Cache Hub** — Centralized per-index data management prevents race conditions and simplifies reload semantics
+2. **Keep-Data-on-Refresh** — Two-slot cache entry prevents blank displays if reload fails
+3. **Atomic JSON Writes** — Temp-file-rename pattern prevents corruption from partial writes
+4. **PBKDF2 Built-In** — No additional crypto packages required; 100,000 iterations + SHA-256
+5. **Provider Factory Pattern** — Easy to add new data source types without modifying controllers
+6. **Configuration as Code** — JSON file editable by users; hot-reload applied without restart
+7. **Index Immutability** — Cannot change source type after creation (Flexmonster-like rule)
+8. **Secrets by Reference** — Passwords/certificates referenced by name, never persisted
+
+---
+
+## Next Steps
+
+1. **Finalize spec.md** — Detailed testable requirements with scenarios
+2. **Create tasks.md** — Implementation task breakdown with dependencies
+3. **Begin Step 1** — Index Configuration (IndexManager, bootstrap, endpoints)
