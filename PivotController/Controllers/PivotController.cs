@@ -42,56 +42,19 @@ public sealed class PivotController : Controller
 
         // The engine dereferences customProperties.Locale unguarded (InitProperties),
         // so InternalProperties must never be null or Locale-derivation throws NRE.
-        parameter.InternalProperties ??= new CustomProperties { Locale = "{}" };
-        if (parameter.InternalProperties.Locale == null)
-        {
-            parameter.InternalProperties.Locale = "{}";
-        }
-        // GenerateMembers reads Locale["Null"] and Locale["GroupOutOfRange"] unguarded;
-        // ensure these keys exist so minimal payloads don't throw KeyNotFoundException.
-        try
-        {
-            Dictionary<string, string>? localeMap = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(parameter.InternalProperties.Locale);
-            if (localeMap is not null)
-            {
-                if (!localeMap.ContainsKey("Null"))
-                {
-                    localeMap["Null"] = "Null";
-                }
-                if (!localeMap.ContainsKey("GroupOutOfRange"))
-                {
-                    localeMap["GroupOutOfRange"] = "OutOfRange";
-                }
-                parameter.InternalProperties.Locale = System.Text.Json.JsonSerializer.Serialize(localeMap);
-            }
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            parameter.InternalProperties.Locale = "{\"Null\":\"Null\",\"GroupOutOfRange\":\"OutOfRange\"}";
-        }
+        parameter.InternalProperties ??= new InternalProperties { Locale = "{}" };
+        parameter.InternalProperties.Locale ??= "{}";
 
-        // The client may supply the index name in the payload (spec §3.2/§10); when present
-        // it takes precedence over the server-side fallback index.
-        string requestedIndex = ServerIndexName;
-        if (parameter.DataSourceSettings is not null)
-        {
-            // FetchData is deserialized with Newtonsoft; a camelCase "index" property is
-            // not bound to DataOptions, so read it from the raw payload instead.
-            string? payloadIndex = TryGetIndexFromPayload(payload);
-            if (!string.IsNullOrWhiteSpace(payloadIndex))
-            {
-                requestedIndex = payloadIndex;
-            }
-        }
-
-        IndexSnapshot? resolved = indexes.Resolve(requestedIndex);
+        // Index routing is currently fixed to ServerIndexName on the server side;
+        // no client-supplied index is expected yet.
+        IndexSnapshot? resolved = indexes.Resolve(ServerIndexName);
         if (resolved is null)
         {
             return NotFound(new
             {
                 title = "IndexNotFound",
                 status = 404,
-                detail = $"Index '{requestedIndex}' was not found.",
+                detail = $"Index '{ServerIndexName}' was not found.",
                 validIndexes = indexes.List().Select(i => i.Index)
             });
         }
@@ -188,33 +151,4 @@ public sealed class PivotController : Controller
         // EngineVersion bumps on every reload/disable/delete/edit so stale engines
         // are never served after the index data changes (spec §12.2 eviction).
         => $"{indexes.EngineKeyPrefix(indexName)}v{indexes.EngineVersion(indexName)}:{parameter.Hash}";
-
-    private static string? TryGetIndexFromPayload(string payload)
-    {
-        try
-        {
-            using System.Text.Json.JsonDocument document = System.Text.Json.JsonDocument.Parse(payload);
-            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
-            {
-                return null;
-            }
-            if (document.RootElement.TryGetProperty("index", out System.Text.Json.JsonElement indexValue) &&
-                indexValue.ValueKind == System.Text.Json.JsonValueKind.String)
-            {
-                return indexValue.GetString();
-            }
-            if (document.RootElement.TryGetProperty("dataSourceSettings", out System.Text.Json.JsonElement settings) &&
-                settings.ValueKind == System.Text.Json.JsonValueKind.Object &&
-                settings.TryGetProperty("index", out System.Text.Json.JsonElement settingsIndex) &&
-                settingsIndex.ValueKind == System.Text.Json.JsonValueKind.String)
-            {
-                return settingsIndex.GetString();
-            }
-        }
-        catch (System.Text.Json.JsonException)
-        {
-            // Malformed payload: fall back to the server-side default index.
-        }
-        return null;
-    }
 }
