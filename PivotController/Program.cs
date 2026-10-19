@@ -16,6 +16,23 @@ builder.Services.AddSingleton<IDataSourceProviderFactory, DataSourceProviderFact
 builder.Services.AddSingleton<IIndexManager, IndexManager>();
 builder.Services.AddHostedService<IndexReloadWorker>();
 
+// General settings (Step 2): port, minimum log level, data folder.
+var generalSettings = builder.Configuration.GetSection(GeneralSettings.SectionName).Get<GeneralSettings>() ?? new GeneralSettings();
+var generalValidation = generalSettings.Validate();
+if (generalValidation.Count > 0)
+{
+    Console.Error.WriteLine("Invalid General settings: " + string.Join("; ", generalValidation));
+    Environment.Exit(1);
+}
+builder.Services.AddSingleton(generalSettings);
+builder.Services.AddSingleton<GeneralSettingsService>();
+builder.Services.AddHostedService<GeneralSettingsFileWatcher>();
+// Kestrel binds the configured General:Port (spec §1.2). ASPNETCORE_URLS still wins when set.
+if (builder.Configuration["urls"] is null || string.IsNullOrWhiteSpace(builder.Configuration["urls"]))
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{generalSettings.Port}");
+}
+
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
     options.JsonSerializerOptions.Converters.Add(new PivotController.Configuration.Models.CsvDecimalSeparatorConverter());
@@ -39,6 +56,10 @@ builder.Services.AddMemoryCache((options) =>
 
 var app = builder.Build();
 
+// Bootstrap: ensure data folder structure (spec §1.4) and register indexes.
+var generalService = app.Services.GetRequiredService<GeneralSettingsService>();
+generalService.EnsureDataFolders();
+
 // Bootstrap: register indexes from appsettings.json and DataServer/indexes.json, preload enabled ones.
 var indexManager = app.Services.GetRequiredService<IIndexManager>();
 await indexManager.RegisterAllAsync();
@@ -56,4 +77,6 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.UseCors(CustomOrigins);
+// Static demo page (tunnel sample) — served from wwwroot/data-server.html.
+app.UseStaticFiles();
 app.Run();

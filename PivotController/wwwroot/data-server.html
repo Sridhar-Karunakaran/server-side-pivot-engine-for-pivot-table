@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Pivot Data Server — Step 1 &amp; Step 2 Demo</title>
+    <link href="https://cdn.syncfusion.com/ej2/21.1.35/material.css" rel="stylesheet" />
+    <script src="https://cdn.syncfusion.com/ej2/ej2-base.min.js"></script>
+    <script src="https://cdn.syncfusion.com/ej2/ej2-data.min.js"></script>
+    <script src="https://cdn.syncfusion.com/ej2/ej2-buttons.min.js"></script>
+    <script src="https://cdn.syncfusion.com/ej2/ej2-popups.min.js"></script>
+    <script src="https://cdn.syncfusion.com/ej2/ej2-navigations.min.js"></script>
+    <script src="https://cdn.syncfusion.com/ej2/ej2-grids.min.js"></script>
+    <script src="https://cdn.syncfusion.com/ej2/ej2-pivotview.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 24px; background: #fafafa; }
+        h1 { font-size: 22px; } h2 { font-size: 16px; margin-top: 28px; }
+        .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin: 8px 0; }
+        table { border-collapse: collapse; font-size: 13px; }
+        td, th { border: 1px solid #ddd; padding: 4px 10px; text-align: left; }
+        th { background: #f5f5f5; }
+        button { padding: 6px 14px; margin: 2px; cursor: pointer; }
+        input, select { padding: 4px; }
+        pre { background: #263238; color: #eeffff; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 12px; }
+        .ok { color: #2e7d32; font-weight: 600; } .err { color: #c62828; font-weight: 600; }
+    </style>
+</head>
+<body>
+    <h1>Pivot Data Server — Demo (Step 1: Index Configuration + Step 2: General Settings)</h1>
+    <p>This page is served by the running Data Server and exercises its REST API through the public tunnel.</p>
+
+    <h2>Step 1 — Index Configuration</h2>
+    <div class="card">
+        <button onclick="loadStatus()">GET /api/indexes (list status)</button>
+        <button onclick="reloadIndex()">POST /api/indexes/Sales-Json/reload</button>
+        <button onclick="disableIndex()">POST /api/indexes/Data-Csv/disable</button>
+        <button onclick="enableIndex()">POST /api/indexes/Data-Csv/enable</button>
+        <button onclick="deleteIndex()">DELETE /api/indexes/Tunnel-Test</button>
+        <button onclick="createIndex()">POST /api/indexes (create Tunnel-Test)</button>
+        <br /><br />
+        <button onclick="getFields()">GET /api/indexes/Data-Csv/fields</button>
+        <button onclick="setField('Number')">PUT fields/Price → Number</button>
+        <button onclick="setField('String')">PUT fields/Price → String</button>
+        <button onclick="delField()">DELETE fields/Price mapping</button>
+    </div>
+    <div id="pivotHolder" class="card">
+        <b>Pivot table (index routing):</b>
+        <select id="indexSelect"><option>Sales-Json</option><option>Data-Csv</option></select>
+        <button onclick="renderPivot()">Render pivot via /api/pivot/post</button>
+        <div id="PivotView"></div>
+    </div>
+
+    <h2>Step 2 — General Settings</h2>
+    <div class="card">
+        <button onclick="getGeneral()">GET /api/config/general</button><br /><br />
+        <label>MinimumLogLevel:
+            <select id="levelSelect">
+                <option>Info</option><option>Warn</option><option>Error</option><option>Fatal</option>
+            </select>
+        </label>
+        <button onclick="putLevel()">PUT /api/config/general</button><br /><br />
+        <label>Port: <input id="portInput" size="8" placeholder="5286" /></label>
+        <button onclick="putPort()">PUT /api/config/general (requiresRestart)</button>
+        <button onclick="putBad()">PUT invalid values (422)</button>
+    </div>
+
+    <h2>Response</h2>
+    <pre id="output">Click a button…</pre>
+
+    <script>
+        const api = window.location.origin;
+        const out = document.getElementById('output');
+        async function call(method, path, body) {
+            try {
+                const res = await fetch(api + path, {
+                    method, headers: { 'Content-Type': 'application/json' },
+                    body: body ? JSON.stringify(body) : undefined
+                });
+                const text = await res.text();
+                out.textContent = method + ' ' + path + '\nHTTP ' + res.status + (res.ok ? ' ✅' : ' ⚠️') + '\n\n' + text;
+                return { ok: res.ok, data: text ? JSON.parse(text) : null };
+            } catch (e) { out.textContent = 'ERROR: ' + e; }
+        }
+        const loadStatus = () => call('GET', '/api/indexes');
+        const reloadIndex = () => call('POST', '/api/indexes/Sales-Json/reload');
+        const disableIndex = () => call('POST', '/api/indexes/Data-Csv/disable');
+        const enableIndex = () => call('POST', '/api/indexes/Data-Csv/enable');
+        const createIndex = () => call('POST', '/api/indexes',
+            { index: 'Tunnel-Test', name: 'Tunnel demo index', sourceType: 'Csv', sourcePath: 'data.csv', csvDecimalSeparator: 'Comma', csvThousandsSeparator: 'Space' });
+        const deleteIndex = () => call('DELETE', '/api/indexes/Tunnel-Test');
+        const getFields = () => call('GET', '/api/indexes/Data-Csv/fields');
+        const setField = (t) => call('PUT', '/api/indexes/Data-Csv/fields/Price', { type: t });
+        const delField = () => call('DELETE', '/api/indexes/Data-Csv/fields/Price');
+        const getGeneral = () => call('GET', '/api/config/general');
+        const putLevel = () => call('PUT', '/api/config/general', { minimumLogLevel: document.getElementById('levelSelect').value });
+        const putPort = () => call('PUT', '/api/config/general', { port: parseInt(document.getElementById('portInput').value || '5286') });
+        const putBad = () => call('PUT', '/api/config/general', { port: 99999, minimumLogLevel: 'Debug', dataFolder: '../../' });
+
+        function renderPivot() {
+            const index = document.getElementById('indexSelect').value;
+            const isCsv = index === 'Data-Csv';
+            const pivot = new ej.pivotview.PivotView({
+                dataSourceSettings: {
+                    url: api + '/api/pivot/post', mode: 'Server',
+                    type: isCsv ? 'CSV' : 'JSON',
+                    expandAll: false,
+                    rows: [{ name: isCsv ? 'Country' : 'Sector' }],
+                    columns: [{ name: isCsv ? 'Category' : 'EnerType' }],
+                    values: [{ name: isCsv ? 'Price' : 'PowUnits' }]
+                },
+                height: 350
+            });
+            document.getElementById('PivotView').innerHTML = '';
+            pivot.appendTo('#PivotView');
+            out.textContent = 'Pivot rendered from index "' + index + '" via POST /api/pivot/post ✅';
+        }
+        ej.base.enableRipple(true);
+    </script>
+</body>
+</html>
