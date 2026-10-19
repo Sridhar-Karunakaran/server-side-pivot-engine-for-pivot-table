@@ -23,6 +23,9 @@ namespace PivotController.Indexing
         string DataCacheKey(string indexName);
         string EngineCacheKey(string indexName, string hash);
         void EvictEngineCache(string indexName);
+        List<IndexFieldDescription> GetFieldMappings(string indexName);
+        Task<IndexStatusResponse> SetFieldMappingAsync(string indexName, string fieldName, MappingDataType type);
+        Task<IndexStatusResponse> RemoveFieldMappingAsync(string indexName, string fieldName);
     }
 
     public class IndexManager : IIndexManager
@@ -57,6 +60,129 @@ namespace PivotController.Indexing
             // tracked through the per-index engine cache wrapper below (see GetOrCreateEngineAsync
             // in the pivot controller) plus explicit invalidation on reload.
         }
+
+        public List<IndexFieldDescription> GetFieldMappings(string indexName)
+        {
+            if (!_indexes.TryGetValue(indexName, out var definition))
+            {
+                throw new KeyNotFoundException($"Index '{indexName}' not found.");
+            }
+            var data = _cache.TryGetValue(DataCacheKey(indexName), out List<ExpandoObject> cached)
+                ? cached
+                : new List<ExpandoObject>();
+            var detected = DetectFieldTypes(data);
+            var mapped = definition.MappingEnabled == true
+                ? (definition.FieldMappings ?? new List<IndexFieldMapping>()).ToDictionary(
+                    m => m.FieldName, m => m.Type, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, MappingDataType>(StringComparer.OrdinalIgnoreCase);
+            return detected.Select(pair => new IndexFieldDescription
+            {
+                FieldName = pair.Key,
+                DetectedType = pair.Value,
+                MappedType = mapped.TryGetValue(pair.Key, out var t) ? ToEngineType(t) : null,
+                EffectiveType = mapped.TryGetValue(pair.Key, out var t2) ? ToEngineType(t2) : pair.Value
+            }).OrderBy(f => f.FieldName, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        public async Task<IndexStatusResponse> SetFieldMappingAsync(string indexName, string fieldName, MappingDataType type)
+        {
+            if (!_indexes.TryGetValue(indexName, out var definition))
+            {
+                throw new KeyNotFoundException($"Index '{indexName}' not found.");
+            }
+            if (string.IsNullOrWhiteSpace(fieldName))
+            {
+                throw new ArgumentException("Field name cannot be empty.");
+            }
+            var detected = DetectFieldTypes(GetIndexDataOrEmpty(indexName));
+            if (!detected.ContainsKey(fieldName))
+            {
+                throw new ArgumentException($"Field '{fieldName}' not found in index '{indexName}'. Valid fields: {string.Join(", ", detected.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))}");
+            }
+            definition.MappingEnabled = true;
+            definition.FieldMappings ??= new List<IndexFieldMapping>();
+            var existing = definition.FieldMappings.FirstOrDefault(m => string.Equals(m.FieldName, fieldName, StringComparison.OrdinalIgnoreCase));
+            if (existing == null)
+            {
+                definition.FieldMappings.Add(new IndexFieldMapping { FieldName = fieldName, Type = type });
+            }
+            else
+            {
+                existing.Type = type;
+            }
+            definition.UpdatedAt = DateTime.UtcNow;
+            Persist();
+            EvictEngineCache(indexName);
+            return await LoadAsync(definition, manual: true).ConfigureAwait(false);
+        }
+
+        public async Task<IndexStatusResponse> RemoveFieldMappingAsync(string indexName, string fieldName)
+        {
+            if (!_indexes.TryGetValue(indexName, out var definition))
+            {
+                throw new KeyNotFoundException($"Index '{indexName}' not found.");
+            }
+            var mapping = definition.FieldMappings?.FirstOrDefault(m => string.Equals(m.FieldName, fieldName, StringComparison.OrdinalIgnoreCase));
+            if (mapping == null)
+            {
+                throw new KeyNotFoundException($"No field mapping for '{fieldName}' in index '{indexName}'.");
+            }
+            definition.FieldMappings!.Remove(mapping);
+            if (definition.FieldMappings.Count == 0)
+            {
+                definition.MappingEnabled = false;
+            }
+            definition.UpdatedAt = DateTime.UtcNow;
+            Persist();
+            EvictEngineCache(indexName);
+            return await LoadAsync(definition, manual: true).ConfigureAwait(false);
+        }
+
+        private List<ExpandoObject> GetIndexDataOrEmpty(string indexName)
+            => _cache.TryGetValue(DataCacheKey(indexName), out List<ExpandoObject> cached) ? cached : new List<ExpandoObject>();
+
+        private static Dictionary<string, string> DetectFieldTypes(List<ExpandoObject> data)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in data)
+            {
+                foreach (var pair in (IDictionary<string, object?>)row)
+                {
+                    if (pair.Value == null)
+                    {
+                        if (!result.ContainsKey(pair.Key)) result[pair.Key] = "string";
+                        continue;
+                    }
+                    var value = pair.Value.ToString();
+                    var type = "string";
+                    if (double.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out _))
+                    {
+                        type = "number";
+                    }
+                    else if (DateTime.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
+                    {
+                        type = "datetime";
+                    }
+                    if (!result.TryGetValue(pair.Key, out var current))
+                    {
+                        result[pair.Key] = type;
+                    }
+                    else if (current != type && !(current == "number" && type == "string"))
+                    {
+                        // Mixed or conflicting values fall back to string.
+                        result[pair.Key] = "string";
+                    }
+                }
+            }
+            return result;
+        }
+
+        private static string ToEngineType(MappingDataType type) => type switch
+        {
+            MappingDataType.Number => "number",
+            MappingDataType.Date => "datetime",
+            _ => "string"
+        };
 
         /// <summary>Bootstrap: registers indexes from appsettings.json and persisted indexes.json.</summary>
         public async Task RegisterAllAsync()

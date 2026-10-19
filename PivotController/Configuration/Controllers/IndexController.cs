@@ -18,6 +18,61 @@ namespace PivotController.Configuration.Controllers
         [HttpGet]
         public ActionResult<List<IndexStatusResponse>> List() => Ok(_indexManager.ListIndexes());
 
+        /// <summary>List every field of the index's data source with detected and mapped (Data Server) data types.</summary>
+        [HttpGet("{index}/fields")]
+        public ActionResult<List<IndexFieldDescription>> GetFields(string index)
+        {
+            try
+            {
+                return Ok(_indexManager.GetFieldMappings(index));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { error = ex.Message });
+            }
+        }
+
+        /// <summary>Set the data type of one field in the Data Server (field mapping). Replaces any existing mapping for the field.</summary>
+        [HttpPut("{index}/fields/{fieldName}")]
+        public async Task<ActionResult<IndexStatusResponse>> SetFieldType(string index, string fieldName, [FromBody] SetFieldTypeRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Type))
+            {
+                return UnprocessableEntity(new { error = "Body must be { \"type\": \"Number\" | \"String\" | \"Date\" }." });
+            }
+            if (!Enum.TryParse<MappingDataType>(request.Type, ignoreCase: true, out var type)
+                || !Enum.IsDefined(type))
+            {
+                return UnprocessableEntity(new { error = $"Unknown type '{request.Type}'. Valid types: Number, String, Date." });
+            }
+            try
+            {
+                return Ok(await _indexManager.SetFieldMappingAsync(index, fieldName, type).ConfigureAwait(false));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { error = ex.Message });
+            }
+            catch (ArgumentException ex)
+            {
+                return UnprocessableEntity(new { error = ex.Message });
+            }
+        }
+
+        /// <summary>Remove a field's data type mapping; the field falls back to the detected type.</summary>
+        [HttpDelete("{index}/fields/{fieldName}")]
+        public async Task<ActionResult<IndexStatusResponse>> RemoveFieldType(string index, string fieldName)
+        {
+            try
+            {
+                return Ok(await _indexManager.RemoveFieldMappingAsync(index, fieldName).ConfigureAwait(false));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(new { error = ex.Message });
+            }
+        }
+
         [HttpGet("{index}")]
         public ActionResult<IndexStatusResponse> Get(string index)
         {
