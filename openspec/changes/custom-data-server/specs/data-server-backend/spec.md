@@ -302,152 +302,843 @@ public class GeneralSettings
 
 ---
 
-## 1. Index Configuration
+## 1. Data Storage Settings Configuration
 
-### 1.1 Index Registration from appsettings.json
+### 1.1 Configuration Model
+
+The `DataStorageSettings` class manages caching, retry policy, and data refresh behavior:
+
+```csharp
+public class DataStorageSettings
+{
+    public int RetryAttempts { get; set; } = 3;       // 0–30 (0 = no retry)
+    public int CacheSizeLimit { get; set; } = 100;    // >= 0 (0 disables caching)
+    public bool KeepDataOnRefresh { get; set; } = true;
+    public long MaxCacheItemSizeBytes { get; set; }   // 0 = unlimited
+}
+```
+
+### 1.2 Retry Attempts Configuration
+
+**SHALL** retry transient failures with exponential backoff (250ms × 2^attempt + jitter) up to `RetryAttempts`; fail fast on validation errors.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|:---:|
+| RetryAttempts | 3 | 0–30 | No |
+
+**Scenario 1.2.1: Retry on Transient IO Failure**
+- Given: File temporarily locked, `RetryAttempts: 3`
+- When: Index load attempted
+- Then: Retries at delays: 250ms, 500ms, 1000ms (±20% jitter)
+- And: Succeeds when file becomes available
+
+**Scenario 1.2.2: No Retry on Validation Error**
+- Given: CSV with mismatched column counts
+- When: Index load attempted with `RetryAttempts: 3`
+- Then: Fails immediately (no retry)
+- And: Returns 422 with error
+
+**Scenario 1.2.3: Retry Policy Exhausted**
+- Given: Network connection unavailable, `RetryAttempts: 3`
+- When: Index reload attempted
+- Then: Retries 3 times, then fails
+- And: Returns 502 with "Unable to load after 3 attempts"
+
+**Scenario 1.2.4: Update Retry Attempts at Runtime**
+- Given: Current `RetryAttempts: 3`
+- When: `PUT /api/config/datastorage { retryAttempts: 5 }`
+- Then: Returns 200, change applied immediately (no restart required)
+- And: Next load attempt uses value 5
+
+### 1.3 Cache Size Limit Configuration
+
+**SHALL** enforce maximum number of cached index datasets per `CacheSizeLimit`.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|:---:|
+| CacheSizeLimit | 100 | >= 0 | **Yes** |
+
+**Scenario 1.3.1: Default Cache Limit**
+- Given: `CacheSizeLimit: 100` (default)
+- When: 100 indexes loaded
+- Then: All data cached successfully
+
+**Scenario 1.3.2: Cache Size Exceeded (LRU Eviction)**
+- Given: `CacheSizeLimit: 5`, 5 indexes loaded and active
+- When: 6th index loads
+- Then: Least-recently-used index evicted from cache
+- And: 6th index cached; subsequent requests to evicted index reload
+
+**Scenario 1.3.3: Cache Disabled**
+- Given: `CacheSizeLimit: 0` (disables caching)
+- When: Index loads
+- Then: Data not cached; every pivot request reloads from source
+- And: Performance degraded; recommended for development only
+
+**Scenario 1.3.4: Cache Size Limit Update Requires Restart**
+- Given: Current `CacheSizeLimit: 100`
+- When: `PUT /api/config/datastorage { cacheSizeLimit: 50 }`
+- Then: Returns 200 with `requiresRestart: true`
+- And: New limit applied after server restart
+
+### 1.4 Keep Data on Refresh Configuration
+
+**SHALL** retain old data if reload fails (when enabled); discard if disabled.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|No |
+| KeepDataOnRefresh | true | bool |
+
+**Scenario 1.4.1: Reload Failure with KeepDataOnRefresh=true**
+- Given: Index "Sales-Data" enabled with `keepDataOnRefresh: true`, data loaded
+- When: `POST /api/indexes/Sales-Data/reload` and source becomes unavailable
+- Then: Returns 502 "Unable to reload"
+- And: Old data continues serving subsequent pivot requests
+
+**Scenario 1.4.2: Reload Failure with KeepDataOnRefresh=false**
+- Given: Index with `keepDataOnRefresh: false`, data loaded
+- When: Reload fails
+- Then: Returns 502; cache evicted
+- And: Subsequent requests fail with 502 until reload succeeds
+
+**Scenario 1.4.3: Auto-Reload Failure with Keep**
+- Given: Index with `autoReload: true`, `keepDataOnRefresh: true`
+- When: Automatic reload triggered at scheduled time, source unavailable
+- Then: Reload logged as failed (category: Indexing)
+- And: Index continues serving old data
+- And: Next scheduled reload retried
+
+**Scenario 1.4.4: Update Keep Data on Refresh**
+- Given: Current `keepDataOnRefresh: true`
+- When: `PUT /api/config/datastorage { keepDataOnRefresh: false }`
+- Then: Returns 200, applied immediately (no restart)
+- And: Affects next reload attempt
+
+### 1.5 Max Cache Item Size Configuration
+
+**SHALL** enforce per-item size limit in cache; items exceeding limit not cached.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|:---:|
+| MaxCacheItemSizeBytes | 0 | >= 0 (0 = unlimited) | **Yes** |
+
+**Scenario 1.5.1: Unlimited Cache Item Size**
+- Given: `MaxCacheItemSizeBytes: 0` (unlimited)
+- When: Large dataset (100 MB) loads
+- Then: Entire dataset cached
+
+**Scenario 1.5.2: Item Size Limit Enforced**
+- Given: `MaxCacheItemSizeBytes: 52428800` (50 MB)
+- When: Index data calculated as 75 MB
+- Then: Item not cached; every request loads from source
+- And: Log warning: "Index exceeds max cache item size"
+
+**Scenario 1.5.3: Update Max Cache Item Size Requires Restart**
+- Given: Current `MaxCacheItemSizeBytes: 0`
+- When: `PUT /api/config/datastorage { maxCacheItemSizeBytes: 52428800 }`
+- Then: Returns 200 with `requiresRestart: true`
+- And: Applied after restart
+
+---
+
+## 2. Database Query Settings Configuration
+
+### 2.1 Configuration Model
+
+The `DatabaseQuerySettings` class manages database command execution:
+
+```csharp
+public class DatabaseQuerySettings
+{
+    public bool CommandTimeoutEnabled { get; set; }  // default false
+    public int CommandTimeLimit { get; set; } = 150; // seconds; 0 = unlimited
+}
+```
+
+### 2.2 Command Timeout Enable/Disable
+
+**SHALL** apply `CommandTimeLimit` to all database operations when enabled; unlimited when disabled.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|:---:|
+| CommandTimeoutEnabled | false | bool | No |
+
+**Scenario 2.2.1: Timeout Disabled (Default)**
+- Given: `CommandTimeoutEnabled: false` (default)
+- When: Slow query executes (takes 5 minutes)
+- Then: Query completes successfully (no timeout)
+
+**Scenario 2.2.2: Timeout Enabled**
+- Given: `CommandTimeoutEnabled: true`, `CommandTimeLimit: 30`
+- When: Query takes longer than 30 seconds
+- Then: Command cancelled after 30 seconds
+- And: Returns 504 Gateway Timeout
+
+**Scenario 2.2.3: Enable Timeout at Runtime**
+- Given: `CommandTimeoutEnabled: false`
+- When: `PUT /api/config/databasequery { commandTimeoutEnabled: true, commandTimeLimit: 60 }`
+- Then: Returns 200, applied immediately (no restart)
+- And: Next query uses 60-second timeout
+
+### 2.3 Command Time Limit Configuration
+
+**SHALL** define maximum execution time for database queries; 0 means unlimited.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|:---:|
+| CommandTimeLimit | 150 | >= 0 (0 = unlimited) | No |
+
+**Scenario 2.3.1: Default Timeout**
+- Given: `CommandTimeLimit: 150` (default, seconds)
+- When: Query takes 120 seconds and `CommandTimeoutEnabled: true`
+- Then: Query completes successfully
+
+**Scenario 2.3.2: Query Exceeds Timeout**
+- Given: `CommandTimeLimit: 30` and `CommandTimeoutEnabled: true`
+- When: Query takes 45 seconds
+- Then: Cancelled after 30 seconds
+- And: Returns 504 with error "Command execution exceeded 30 seconds"
+
+**Scenario 2.3.3: Unlimited Timeout (0)**
+- Given: `CommandTimeLimit: 0` (unlimited)
+- When: Long-running query executes
+- Then: Query runs to completion (no timeout)
+
+**Scenario 2.3.4: Update Command Time Limit**
+- Given: Current `CommandTimeLimit: 150`
+- When: `PUT /api/config/databasequery { commandTimeLimit: 300 }`
+- Then: Returns 200, applied immediately
+- And: Next query uses 300-second timeout
+
+### 2.4 Applies To
+
+Command timeout applies to:
+- Initial index creation (first data load)
+- Index reload (manual via `/reload` or automatic)
+- Database query execution (index serving pivot requests)
+- Database reconnection (after connection drop)
+
+**Scenario 2.4.1: Timeout on Initial Creation**
+- Given: Creating database index with `CommandTimeLimit: 30`, `CommandTimeoutEnabled: true`
+- When: First query takes 40 seconds
+- Then: Returns 504; index creation fails
+- And: User must retry after diagnosing slow query
+
+**Scenario 2.4.2: Timeout on Auto-Reload**
+- Given: Index with `autoReload: true`, query normally takes 5 seconds
+- When: Database slow, auto-reload takes 40 seconds, limit is 30 seconds
+- Then: Reload fails (504); old data continues serving (if `keepDataOnRefresh: true`)
+
+### 2.5 Database Query Settings API
+
+**SHALL** expose Database Query settings via endpoints.
+
+**Scenario 2.5.1: Get Database Query Settings**
+- Given: Server running
+- When: `GET /api/config/databasequery`
+- Then: Returns 200 with JSON: `{ "commandTimeoutEnabled": false, "commandTimeLimit": 150 }`
+
+**Scenario 2.5.2: Update Database Query Settings**
+- Given: Current settings
+- When: `PUT /api/config/databasequery { commandTimeoutEnabled: true, commandTimeLimit: 60 }`
+- Then: Returns 200 with updated settings
+- And: Applied immediately (no restart required)
+
+---
+
+## 3. HTTPS Settings Configuration
+
+### 3.1 Configuration Model
+
+The `HttpsSettings` class manages SSL/TLS certificate and protocol configuration:
+
+```csharp
+public enum HttpProtocolsOption { HTTP1, HTTP2, HTTP1_AND_HTTP2 }
+public enum CertificateStoreLocationOption { CurrentUser, LocalMachine }
+
+public class HttpsSettings
+{
+    public bool Enabled { get; set; }                            // default false
+    public string? PfxPath { get; set; }
+    public string? PfxPassword { get; set; }                     // secret — never persisted
+    public string? PemCertPath { get; set; }
+    public string? PemKeyPath { get; set; }
+    public CertificateStoreLocationOption StoreLocation { get; set; } = CertificateStoreLocationOption.CurrentUser;
+    public string StoreName { get; set; } = "My";
+    public string? Thumbprint { get; set; }
+    public HttpProtocolsOption Protocols { get; set; } = HttpProtocolsOption.HTTP1_AND_HTTP2;
+    public bool AllowInvalidCertificates { get; set; }           // rejected in Production
+}
+```
+
+### 3.2 HTTPS Enable/Disable
+
+**SHALL** enable/disable HTTPS with certificate validation; requires exactly one certificate source when enabled.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|:---:|
+| Enabled | false | bool | **Yes** |
+
+**Scenario 3.2.1: HTTPS Disabled (Default)**
+- Given: `enabled: false`
+- When: Application starts
+- Then: Server listens on `http://localhost:{port}` only
+- And: CORS uses `http://localhost:{port}` base URL
+
+**Scenario 3.2.2: Enable HTTPS with PFX Certificate**
+- Given: `enabled: true`, `pfxPath: "certs/server.pfx"`, `pfxPassword: "secret"` (from user-secrets)
+- When: Application starts
+- Then: Server listens on `https://localhost:{port}`
+- And: Certificate loaded from PFX file
+
+**Scenario 3.2.3: Enable HTTPS with PEM Certificates**
+- Given: `enabled: true`, `pemCertPath: "certs/server.crt"`, `pemKeyPath: "certs/server.key"`
+- When: Application starts
+- Then: Server listens on `https://localhost:{port}`
+- And: Certificate/key loaded from PEM files
+
+**Scenario 3.2.4: Enable HTTPS with Certificate Store**
+- Given: `enabled: true`, `storeLocation: "LocalMachine"`, `storeName: "My"`, `thumbprint: "ABC123"`
+- When: Application starts (on Windows)
+- Then: Certificate loaded from Windows certificate store by thumbprint
+
+**Scenario 3.2.5: Attempt Enable HTTPS without Certificate Source**
+- Given: `enabled: true`, but no PFX, PEM, or Store configured
+- When: `PUT /api/config/https { enabled: true }`
+- Then: Returns 422 "Https.Enabled requires exactly one certificate source (PFX, PEM, or Store)"
+
+**Scenario 3.2.6: Enable HTTPS Requires Restart**
+- Given: Server running on HTTP
+- When: `PUT /api/config/https { enabled: true, pfxPath: "certs/server.pfx" }`
+- Then: Returns 200 with `requiresRestart: true`
+- And: HTTPS not active until restart
+
+### 3.3 Certificate Configuration
+
+**SHALL** support multiple certificate sources: PFX, PEM, and Windows Certificate Store.
+
+**Scenario 3.3.1: PFX Certificate Resolution**
+- Given: `pfxPath: "certs/server.pfx"`, password from user-secrets
+- When: Application starts with `https.enabled: true`
+- Then: Certificate loaded via `new X509Certificate2(path, password)`
+
+**Scenario 3.3.2: PEM Certificate Resolution**
+- Given: `pemCertPath: "certs/server.crt"`, `pemKeyPath: "certs/server.key"`
+- When: Application starts
+- Then: Certificate loaded via `X509Certificate2.CreateFromPemFile(certPath, keyPath)`
+- And: Exported to PKCS12 format (Linux-safe)
+
+**Scenario 3.3.3: Certificate Store Resolution (Windows Only)**
+- Given: `storeLocation: "LocalMachine"`, `storeName: "My"`, `thumbprint: "ABC123DEF"`
+- When: Application starts on Windows
+- Then: Certificate retrieved from store by thumbprint
+- And: On non-Windows OS: returns 422 "Certificate store not supported on this OS"
+
+**Scenario 3.3.4: Invalid Certificate File**
+- Given: `pfxPath: "/nonexistent/cert.pfx"`
+- When: Application starts with `https.enabled: true`
+- Then: Startup fails with error "Certificate file not found: /nonexistent/cert.pfx"
+
+**Scenario 3.3.5: AllowInvalidCertificates Forbidden in Production**
+- Given: `allowInvalidCertificates: true` in Production environment
+- When: Configuration validated at startup
+- Then: Returns error "AllowInvalidCertificates forbidden in Production environment"
+- And: Application does not start
+
+**Scenario 3.3.6: AllowInvalidCertificates Allowed in Development**
+- Given: `allowInvalidCertificates: true` in Development environment
+- When: Configuration validated
+- Then: Accepted with warning log: "Invalid certificates allowed (Development only)"
+
+### 3.4 HTTP Protocol Configuration
+
+**SHALL** support HTTP/1, HTTP/2, or both.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|:---:|
+| Protocols | HTTP1_AND_HTTP2 | HTTP1 \| HTTP2 \| HTTP1_AND_HTTP2 | **Yes** |
+
+**Scenario 3.4.1: HTTP/2 Only**
+- Given: `protocols: "HTTP2"`, HTTPS enabled
+- When: Application starts
+- Then: Server accepts only HTTP/2 connections
+- And: HTTP/1 clients receive protocol error
+
+**Scenario 3.4.2: HTTP/1 Only**
+- Given: `protocols: "HTTP1"`, HTTPS enabled
+- When: Application starts
+- Then: Server accepts only HTTP/1 connections
+- And: HTTP/2 clients fall back or error
+
+**Scenario 3.4.3: Both HTTP/1 and HTTP/2**
+- Given: `protocols: "HTTP1_AND_HTTP2"` (default)
+- When: Application starts
+- Then: Server accepts both HTTP/1 and HTTP/2
+- And: Client chooses version (typically HTTP/2 for modern clients)
+
+### 3.5 HTTPS Configuration API
+
+**Scenario 3.5.1: Get HTTPS Settings**
+- Given: Server running
+- When: `GET /api/config/https`
+- Then: Returns 200 with JSON (passwords omitted)
+
+**Scenario 3.5.2: Update HTTPS Settings**
+- Given: Current HTTPS disabled
+- When: `PUT /api/config/https { enabled: true, protocols: "HTTP2" }`
+- Then: Returns 200 with `requiresRestart: true`
+
+---
+
+## 4. Security Settings Configuration
+
+### 4.1 Configuration Model
+
+The `SecuritySettings` class manages authentication and CORS:
+
+```csharp
+public class SecuritySettings
+{
+    public bool BasicAuthEnabled { get; set; }                 // default false
+    public List<string> AllowedOrigins { get; set; } = ["*"];  // default allow all
+}
+```
+
+### 4.2 Basic Authentication Enable/Disable
+
+**SHALL** enable/disable Basic Auth; when enabled, all endpoints require `Authorization: Basic` header.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|No |
+| BasicAuthEnabled | false | bool |
+
+**Scenario 4.2.1: Basic Auth Disabled (Default)**
+- Given: `basicAuthEnabled: false`
+- When: Pivot request sent without credentials
+- Then: Accepted; no authentication required
+
+**Scenario 4.2.2: Enable Basic Auth**
+- Given: `basicAuthEnabled: false`
+- When: `PUT /api/security { basicAuthEnabled: true }`
+- Then: Returns 200, applied immediately
+- And: Subsequent requests without credentials return 401
+
+**Scenario 4.2.3: Basic Auth with Valid Credentials**
+- Given: `basicAuthEnabled: true`, user "admin" with password "secret"
+- When: Request sent with `Authorization: Basic YWRtaW46c2VjcmV0` (base64)
+- Then: Request accepted (200)
+
+**Scenario 4.2.4: Basic Auth with Invalid Credentials**
+- Given: `basicAuthEnabled: true`
+- When: Request sent with `Authorization: Basic aW52YWxpZDppbnZhbGlk` (base64)
+- Then: Returns 401 with `WWW-Authenticate: Basic realm="DataServer"`
+
+**Scenario 4.2.5: User Management Endpoint Anonymous**
+- Given: `basicAuthEnabled: true`
+- When: `POST /api/security/users` (create user, no credentials)
+- Then: Accepted (creates first admin user)
+- And: Subsequent admin user creation requires authentication
+
+**Scenario 4.2.6: Disable Basic Auth**
+- Given: `basicAuthEnabled: true`
+- When: `PUT /api/security { basicAuthEnabled: false }`
+- Then: Returns 200, applied immediately
+- And: Credentials no longer required
+
+### 4.3 CORS Origin Validation
+
+**SHALL** validate `Origin` header against `AllowedOrigins`; reject mismatches.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|No |
+| AllowedOrigins | ["*"] | List of origins or ["*"] |
+
+**Scenario 4.3.1: Allow All Origins (Wildcard)**
+- Given: `allowedOrigins: ["*"]`
+- When: Browser request from any origin, with `Origin` header
+- Then: Accepted; `Access-Control-Allow-Origin: *` in response
+
+**Scenario 4.3.2: Restrict to Specific Origins**
+- Given: `allowedOrigins: ["https://app.example.com", "https://admin.example.com"]`
+- When: Request from `https://app.example.com` with `Origin` header
+- Then: Accepted; `Access-Control-Allow-Origin: https://app.example.com` in response
+
+**Scenario 4.3.3: Origin Not in Allowed List**
+- Given: `allowedOrigins: ["https://app.example.com"]`
+- When: Request from `https://attacker.com` with `Origin` header
+- Then: Returns 403 Forbidden
+- And: Logged: "Origin not allowed: https://attacker.com"
+
+**Scenario 4.3.4: No Origin Header (Non-Browser Request)**
+- Given: `allowedOrigins: ["https://app.example.com"]` (restricted)
+- When: Request without `Origin` header (e.g., curl, server-to-server)
+- Then: Returns 403 (defense-in-depth for CSRF)
+
+**Scenario 4.3.5: Update Allowed Origins**
+- Given: Current `allowedOrigins: ["*"]`
+- When: `PUT /api/security { allowedOrigins: ["https://app.example.com"] }`
+- Then: Returns 200, applied immediately (no restart)
+- And: Next request from other origins rejected
+
+### 4.4 User Management APIs
+
+**Scenario 4.4.1: Create User**
+- Given: `basicAuthEnabled: true`
+- When: `POST /api/security/users { username: "analyst", password: "p@ssw0rd" }`
+- Then: Returns 201 with user metadata
+- And: Password hashed with PBKDF2, not stored plaintext
+
+**Scenario 4.4.2: List Users**
+- Given: Server with 3 users
+- When: `GET /api/security/users` (with credentials)
+- Then: Returns 200 with username list (no passwords)
+
+**Scenario 4.4.3: Delete User**
+- Given: User "analyst" exists
+- When: `DELETE /api/security/users/analyst` (with admin credentials)
+- Then: Returns 204
+- And: User cannot authenticate
+
+---
+
+## 5. Report Sharing Settings Configuration
+
+### 5.1 Configuration Model
+
+The `ReportSharingSettings` class manages report storage and lifecycle:
+
+```csharp
+public class ReportSharingSettings
+{
+    public bool EndpointEnabled { get; set; }                  // default false
+    public string StoragePath { get; set; } = "DataServer/reports";
+    public int ReportExpirationTimeMinutes { get; set; }       // 0 = permanent
+    public int MaxFolderSizeMB { get; set; }                   // 0 = unlimited
+    public bool AutoDelete { get; set; }                       // default false
+}
+```
+
+### 5.2 Endpoint Enable/Disable
+
+**SHALL** enable/disable report sharing endpoints; when disabled, all report endpoints return 404.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|No |
+| EndpointEnabled | false | bool |
+
+**Scenario 5.2.1: Report Sharing Disabled (Default)**
+- Given: `endpointEnabled: false`
+- When: `POST /api/reportsharing/reports`
+- Then: Returns 404 "Report sharing is disabled"
+
+**Scenario 5.2.2: Enable Report Sharing**
+- Given: `endpointEnabled: false`
+- When: `PUT /api/config/reportsharing { endpointEnabled: true }`
+- Then: Returns 200, applied immediately
+- And: `/api/reportsharing/*` endpoints now available
+
+**Scenario 5.2.3: Disable Report Sharing**
+- Given: `endpointEnabled: true`, reports stored
+- When: `PUT /api/config/reportsharing { endpointEnabled: false }`
+- Then: Returns 200, applied immediately
+- And: Existing reports not deleted (remain on disk)
+- And: All endpoints return 404
+
+### 5.3 Storage Path Configuration
+
+**SHALL** define directory for report storage; must be writable and within `DataFolder`.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|**Yes** |
+| StoragePath | DataServer/reports | Non-empty, writable, within DataFolder | **Yes** |
+
+**Scenario 5.3.1: Default Storage Path**
+- Given: `storagePath: "DataServer/reports"` (default)
+- When: Application starts with reports enabled
+- Then: Directory `DataServer/reports` created if missing
+- And: Subdirectories: `DataServer/reports/`.quota
+
+**Scenario 5.3.2: Custom Storage Path**
+- Given: `storagePath: "/custom/reports"`
+- When: Application starts with reports enabled
+- Then: Directory `/custom/reports` created/validated
+- And: Reports stored there
+
+**Scenario 5.3.3: Storage Path Not Writable**
+- Given: `storagePath: "/readonly/reports"` (read-only permission)
+- When: Application starts with `endpointEnabled: true`
+- Then: Startup fails with error "Storage path not writable: /readonly/reports"
+
+**Scenario 5.3.4: Storage Path Update Requires Restart**
+- Given: Current `storagePath: "DataServer/reports"`
+- When: `PUT /api/config/reportsharing { storagePath: "/new/reports" }`
+- Then: Returns 200 with `requiresRestart: true`
+- And: New path used after restart
+
+### 5.4 Report Expiration Configuration
+
+**SHALL** delete expired reports; 0 means permanent storage.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|No |
+| ReportExpirationTimeMinutes | 0 | >= 0 (0 = permanent) |
+
+**Scenario 5.4.1: Permanent Reports (Default)**
+- Given: `reportExpirationTimeMinutes: 0` (default)
+- When: Report saved
+- Then: `expiresAt: null` in metadata
+- And: Report never expires automatically
+
+**Scenario 5.4.2: Report Expiration Set**
+- Given: `reportExpirationTimeMinutes: 1440` (24 hours)
+- When: Report saved at 10:00 AM
+- Then: `expiresAt: 2025-01-02T10:00:00Z` in metadata
+- And: `GET /api/reportsharing/reports/{id}` at 10:01 AM next day returns 410 Gone
+
+**Scenario 5.4.3: Read Expired Report**
+- Given: Report expired at 2025-01-02T10:00:00Z, `autoDelete: false`
+- When: `GET /api/reportsharing/reports/{id}` after expiration
+- Then: Returns 410 Gone
+- And: File remains on disk (not deleted)
+
+**Scenario 5.4.4: Update Expiration Time**
+- Given: Current `reportExpirationTimeMinutes: 1440`
+- When: `PUT /api/config/reportsharing { reportExpirationTimeMinutes: 4320 }` (72 hours)
+- Then: Returns 200, applied immediately
+- And: Existing reports' expiration not recalculated (only new reports use new setting)
+
+### 5.5 Storage Quota Configuration
+
+**SHALL** enforce maximum folder size; oldest reports deleted when quota exceeded.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|No |
+| MaxFolderSizeMB | 0 | >= 0 (0 = unlimited) |
+
+**Scenario 5.5.1: Unlimited Quota (Default)**
+- Given: `maxFolderSizeMB: 0` (unlimited)
+- When: Reports saved
+- Then: No quota enforcement; reports grow unbounded
+
+**Scenario 5.5.2: Quota Limit Set**
+- Given: `maxFolderSizeMB: 1000` (1 GB)
+- When: Reports total 950 MB, new 100 MB report saved
+- Then: Oldest reports deleted to stay within 1 GB
+- And: New report saved successfully
+
+**Scenario 5.5.3: Save Exceeds Quota**
+- Given: `maxFolderSizeMB: 1000`, folder currently 1000 MB
+- When: `POST /api/reportsharing/reports` with 10 MB report
+- Then: Returns 507 Insufficient Storage
+- And: Report not saved
+
+**Scenario 5.5.4: Quota Tracking**
+- Given: Reports stored
+- When: `GET /api/reportsharing/reports` (metadata list)
+- Then: Response includes `{ currentSizeBytes, quotaMB, percentUsed }`
+
+### 5.6 Auto-Delete Configuration
+
+**SHALL** run cleanup sweep every 5 minutes when enabled; removes expired reports and enforces quota.
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|No |
+| AutoDelete | false | bool |
+
+**Scenario 5.6.1: Auto-Delete Disabled (Default)**
+- Given: `autoDelete: false`
+- When: Report expires
+- Then: File remains on disk
+- And: Manual cleanup required or `GET` returns 410
+
+**Scenario 5.6.2: Enable Auto-Delete**
+- Given: `autoDelete: false`
+- When: `PUT /api/config/reportsharing { autoDelete: true }`
+- Then: Returns 200, applied immediately
+- And: Background service starts 5-minute sweep cycle
+
+**Scenario 5.6.3: Auto-Delete Removes Expired Reports**
+- Given: `autoDelete: true`, 5 expired reports
+- When: Cleanup sweep runs
+- Then: Expired reports deleted from disk
+- And: Log entry: "ReportSharing: Deleted 5 expired reports"
+
+**Scenario 5.6.4: Auto-Delete Enforces Quota**
+- Given: `autoDelete: true`, `maxFolderSizeMB: 1000`, folder at 1100 MB
+- When: Cleanup sweep runs
+- Then: Oldest reports deleted until folder < 1000 MB
+- And: Log entry: "ReportSharing: Evicted 150 MB to stay within quota"
+
+### 5.7 Report Sharing APIs
+
+**Scenario 5.7.1: Save Report**
+- Given: `endpointEnabled: true`
+- When: `POST /api/reportsharing/reports { name: "Q4-Review", owner: "analyst@corp", payload: {...} }`
+- Then: Returns 201 with `{ reportId, createdAt, expiresAt, sizeBytes }`
+
+**Scenario 5.7.2: Retrieve Report**
+- Given: Report "abc-123" saved
+- When: `GET /api/reportsharing/reports/abc-123`
+- Then: Returns 200 with full report payload
+
+**Scenario 5.7.3: List Reports**
+- Given: 5 reports saved
+- When: `GET /api/reportsharing/reports`
+- Then: Returns 200 with metadata list (no payloads)
+
+**Scenario 5.7.4: Delete Report**
+- Given: Report "abc-123" saved
+- When: `DELETE /api/reportsharing/reports/abc-123`
+- Then: Returns 204; file deleted
+
+---
+
+## 6. Index Configuration
+
+### 6.1 Index Registration from appsettings.json
 
 **SHALL** load index definitions from `DataServer:Indexes` array in `appsettings.json` at startup and make them available immediately without manual file creation.
 
-**Scenario 1.1.1: Index Declared in appsettings.json**
+**Scenario 6.1.1: Index Declared in appsettings.json**
 - Given: `appsettings.json` contains `DataServer:Indexes[0]` with `Index: "Sales-Data"`, `SourceType: "Csv"`, `SourcePath: "sales.csv"`
 - When: Application starts
 - Then: `GET /api/indexes/Sales-Data` returns 200 with `status: "Ready"` and `rowCount > 0`
 
-**Scenario 1.1.2: Multiple Indexes Coexist**
+**Scenario 6.1.2: Multiple Indexes Coexist**
 - Given: appsettings defines 3 indexes (JSON, CSV, Database)
 - When: `GET /api/indexes`
 - Then: Returns 200 with all 3 indexes listed
 
-### 1.2 Index Lifecycle APIs
+### 6.2 Index Lifecycle APIs
 
 **SHALL** support full index lifecycle via REST API: create, edit, reload, enable/disable, delete.
 
-**Scenario 1.2.1: Create Index**
+**Scenario 6.2.1: Create Index**
 - Given: No index named "test-index"
 - When: `POST /api/indexes { index: "test-index", name: "Test", sourceType: "Csv", sourcePath: "test.csv" }`
 - Then: Returns 201 with `status: "Ready"` and loads data
 
-**Scenario 1.2.2: Edit Index**
+**Scenario 6.2.2: Edit Index**
 - Given: Index "Sales-Data" exists
 - When: `PUT /api/indexes/Sales-Data { name: "Sales Data Updated", csvDelimiter: ";" }`
 - Then: Returns 200, metadata updated, data reloaded
 
-**Scenario 1.2.3: Attempt to Change SourceType**
+**Scenario 6.2.3: Attempt to Change SourceType**
 - Given: Index "Sales-Data" with `sourceType: "Csv"`
 - When: `PUT /api/indexes/Sales-Data { sourceType: "Json" }`
 - Then: Returns 422 with error message "SourceType is immutable"
 
-**Scenario 1.2.4: Reload Index**
+**Scenario 6.2.4: Reload Index**
 - Given: Index "Sales-Data" with stale data
 - When: `POST /api/indexes/Sales-Data/reload`
 - Then: Returns 200 with updated `rowCount`
 
-**Scenario 1.2.5: Enable/Disable Index**
+**Scenario 6.2.5: Enable/Disable Index**
 - Given: Index "Sales-Data"
 - When: `POST /api/indexes/Sales-Data/disable`
 - Then: Returns 200; pivot requests to it return 423
 - When: `POST /api/indexes/Sales-Data/enable`
 - Then: Returns 200; index loads and serves again
 
-**Scenario 1.2.6: Delete Index**
+**Scenario 6.2.6: Delete Index**
 - Given: Index "Sales-Data"
 - When: `DELETE /api/indexes/Sales-Data`
 - Then: Returns 204; subsequent pivot requests return 404
 
-### 1.3 Index Naming & Uniqueness
+### 6.3 Index Naming & Uniqueness
 
 **SHALL** enforce case-insensitive unique index names matching pattern `[A-Za-z0-9._-]{1,64}`.
 
-**Scenario 1.3.1: Duplicate Index Creation**
+**Scenario 6.3.1: Duplicate Index Creation**
 - Given: Index "Sales-Data" exists
 - When: `POST /api/indexes { index: "sales-data" ... }` (lowercase variant)
 - Then: Returns 409 "Index already exists"
 
-**Scenario 1.3.2: Invalid Index Name**
+**Scenario 6.3.2: Invalid Index Name**
 - Given: No index
 - When: `POST /api/indexes { index: "sales@data!" ... }`
 - Then: Returns 422 "Invalid index name"
 
-### 1.4 CSV Separator Configuration
+### 6.4 CSV Separator Configuration
 
 **SHALL** honor CSV delimiter, decimal separator, and thousands separator options on load.
 
-**Scenario 1.4.1: Custom CSV Delimiters**
+**Scenario 6.4.1: Custom CSV Delimiters**
 - Given: CSV file with semicolon-delimited columns and comma as decimal separator
 - When: Index created with `csvDelimiter: ";"`, `csvDecimalSeparator: ","`
 - Then: Data loads correctly with proper field count and numeric precision
 
-**Scenario 1.4.2: Edit Separators**
+**Scenario 6.4.2: Edit Separators**
 - Given: Index using default separators
 - When: `PUT /api/indexes/sales-csv { csvDelimiter: "|" }`
 - Then: Data reloaded with new delimiter honored
 
-### 1.5 Field Mapping (Type Inference)
+### 6.5 Field Mapping (Type Inference)
 
 **SHALL** support optional per-field type mapping (Number, String, Date); disabled by default (autodetect).
 
-**Scenario 1.5.1: Mapping Disabled (Default)**
+**Scenario 6.5.1: Mapping Disabled (Default)**
 - Given: Index with `mappingEnabled: false`
 - When: Data loads
 - Then: Field types autodetected; all fields accessible as discovered
 
-**Scenario 1.5.2: Mapping Enabled**
+**Scenario 6.5.2: Mapping Enabled**
 - Given: Index with `mappingEnabled: true`, `fieldMappings: [{ fieldName: "Price", type: "Number" }]`
 - When: Data loads
 - Then: "Price" field enforced as Number type
 
-**Scenario 1.5.3: Disable Mapping**
+**Scenario 6.5.3: Disable Mapping**
 - Given: Index with `mappingEnabled: true`, custom mappings applied
 - When: `PUT /api/indexes/{index} { mappingEnabled: false }`
 - Then: Mappings deleted, autodetect restored
 
-### 1.6 Database Test Connection
+### 6.6 Database Test Connection
 
 **SHALL** test database connection and return success/failure with latency.
 
-**Scenario 1.6.1: Test Connection Success**
+**Scenario 6.6.1: Test Connection Success**
 - Given: Index with valid `connectionStringName`
 - When: `POST /api/indexes/{index}/test-connection`
 - Then: Returns 200 `{ success: true, latencyMs: 42 }`
 
-**Scenario 1.6.2: Test Connection Failure**
+**Scenario 6.6.2: Test Connection Failure**
 - Given: Index with invalid connection string
 - When: `POST /api/indexes/{index}/test-connection`
 - Then: Returns 502 `{ success: false, error: "Unable to connect: ..." }`
 
 ---
 
-## 2. Pivot Request Routing
+## 7. Pivot Request Routing
 
-### 2.1 Index-Aware Pivot Endpoint
+### 7.1 Index-Aware Pivot Endpoint
 
 **SHALL** accept `index` field in pivot request and route to the named index; default to `DefaultIndexId` if absent.
 
-**Scenario 2.1.1: Pivot Request with Index**
+**Scenario 7.1.1: Pivot Request with Index**
 - Given: Indexes "Sales-Data" and "Sales-Db" registered
 - When: `POST /api/pivot/post { index: "Sales-Data", action: "fetchFieldMembers", memberName: "Country" }`
 - Then: Returns 200 with members from "Sales-Data" index
 
-**Scenario 2.1.2: Pivot Request without Index (Legacy)**
+**Scenario 7.1.2: Pivot Request without Index (Legacy)**
 - Given: `DefaultIndexId: "default"`
 - When: `POST /api/pivot/post { action: "fetchFieldMembers", memberName: "Country" }` (no index field)
 - Then: Returns 200 using "default" index (backward compatible)
 
-**Scenario 2.1.3: Unknown Index**
+**Scenario 7.1.3: Unknown Index**
 - Given: No index named "unknown"
 - When: `POST /api/pivot/post { index: "unknown", action: "..." }`
 - Then: Returns 404 with valid index names listed
 
-**Scenario 2.1.4: Disabled Index**
+**Scenario 7.1.4: Disabled Index**
 - Given: Index "Sales-Data" with `enabled: false`
 - When: `POST /api/pivot/post { index: "Sales-Data", action: "..." }`
 - Then: Returns 423 "Index is disabled"
 
-### 2.2 Cache Key Prefixing
+### 7.2 Cache Key Prefixing
 
 **SHALL** prefix all per-index cache entries with index name to prevent data collision.
 
-**Scenario 2.2.1: Separate Cache per Index**
+**Scenario 7.2.1: Separate Cache per Index**
 - Given: Two indexes "Sales-Data" and "Sales-Json" with different data
 - When: Pivot requests to both
 - Then: Cache keys are `data:Sales-Data` and `data:Sales-Json`; each serves correct data
