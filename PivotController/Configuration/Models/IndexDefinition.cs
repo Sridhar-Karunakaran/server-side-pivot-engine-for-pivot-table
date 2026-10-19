@@ -12,8 +12,10 @@ namespace PivotController.Configuration.Models
         public DataSourceType SourceType { get; set; }
         public string? SourcePath { get; set; }
         public string CsvDelimiter { get; set; } = ",";
-        public string CsvDecimalSeparator { get; set; } = ".";
-        public string CsvThousandsSeparator { get; set; } = ",";
+        /// <summary>Enum: Comma (,) or Dot (.). Raw symbols also accepted in JSON.</summary>
+        public CsvDecimalSeparator CsvDecimalSeparator { get; set; } = CsvDecimalSeparator.Dot;
+        /// <summary>Enum: Comma (,), Dot (.) or Space ( ). Raw symbols also accepted in JSON.</summary>
+        public CsvThousandsSeparator CsvThousandsSeparator { get; set; } = CsvThousandsSeparator.Comma;
         public DatabaseType? DatabaseType { get; set; }
         public string? ConnectionStringName { get; set; }
         public string? Query { get; set; }

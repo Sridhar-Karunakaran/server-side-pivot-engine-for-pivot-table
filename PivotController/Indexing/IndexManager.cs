@@ -290,8 +290,10 @@ namespace PivotController.Indexing
             existing.Name = string.IsNullOrWhiteSpace(patch.Name) ? existing.Name : patch.Name;
             existing.SourcePath = patch.SourcePath ?? existing.SourcePath;
             existing.CsvDelimiter = string.IsNullOrWhiteSpace(patch.CsvDelimiter) ? existing.CsvDelimiter : patch.CsvDelimiter;
-            if (!string.IsNullOrWhiteSpace(patch.CsvDecimalSeparator)) existing.CsvDecimalSeparator = patch.CsvDecimalSeparator;
-            if (!string.IsNullOrWhiteSpace(patch.CsvThousandsSeparator)) existing.CsvThousandsSeparator = patch.CsvThousandsSeparator;
+            // Separator enums: enums cannot be null, so a patch always carries a value;
+            // apply it unconditionally (defaults match the model defaults when omitted).
+            existing.CsvDecimalSeparator = patch.CsvDecimalSeparator;
+            existing.CsvThousandsSeparator = patch.CsvThousandsSeparator;
             existing.ConnectionStringName = patch.ConnectionStringName ?? existing.ConnectionStringName;
             existing.Query = patch.Query ?? existing.Query;
             existing.AutoReload = patch.AutoReload || (patch.ReloadIntervalMinutes > 0 && patch.AutoReload) ? patch.AutoReload : existing.AutoReload;

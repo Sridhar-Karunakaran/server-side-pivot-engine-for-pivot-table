@@ -18,6 +18,8 @@ builder.Services.AddHostedService<IndexReloadWorker>();
 
 builder.Services.AddControllers().AddJsonOptions(options =>
 {
+    options.JsonSerializerOptions.Converters.Add(new PivotController.Configuration.Models.CsvDecimalSeparatorConverter());
+    options.JsonSerializerOptions.Converters.Add(new PivotController.Configuration.Models.CsvThousandsSeparatorConverter());
     options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
 builder.Services.AddEndpointsApiExplorer();
