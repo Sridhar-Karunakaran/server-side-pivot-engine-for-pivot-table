@@ -22,6 +22,15 @@ namespace PivotController.Configuration.Controllers
         public ActionResult<DataStorageSettings> Get() => Ok(_dataStorage.Current);
 
         /// <summary>
+        /// Cache observability (spec §2.3): which indexes are currently cached vs evicted,
+        /// and the effective CacheSizeLimit. Use after loading more indexes than the limit
+        /// to see LRU eviction in the EvictedIndexes list.
+        /// </summary>
+        [HttpGet("datastorage/cache-stats")]
+        public ActionResult<CacheStatsResponse> GetCacheStats([FromServices] Indexing.IIndexManager indexManager)
+            => Ok(indexManager.GetCacheStats());
+
+        /// <summary>
         /// Merge-patch of data storage settings. RetryAttempts/KeepDataOnRefresh apply
         /// immediately; CacheSizeLimit/MaxCacheItemSizeBytes require restart.
         /// </summary>

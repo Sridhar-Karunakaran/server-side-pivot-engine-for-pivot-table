@@ -23,6 +23,8 @@ namespace PivotController.Indexing
         string DataCacheKey(string indexName);
         string EngineCacheKey(string indexName, string hash);
         void EvictEngineCache(string indexName);
+        /// <summary>Cache observability: which indexes are cached vs evicted (spec §2.3 testing aid).</summary>
+        CacheStatsResponse GetCacheStats();
         List<IndexFieldDescription> GetFieldMappings(string indexName);
         Task<IndexStatusResponse> SetFieldMappingAsync(string indexName, string fieldName, MappingDataType type);
         Task<IndexStatusResponse> RemoveFieldMappingAsync(string indexName, string fieldName);
@@ -62,6 +64,30 @@ namespace PivotController.Indexing
             // MemoryCache does not support prefix enumeration without reflection; engine keys are
             // tracked through the per-index engine cache wrapper below (see GetOrCreateEngineAsync
             // in the pivot controller) plus explicit invalidation on reload.
+        }
+
+        public CacheStatsResponse GetCacheStats()
+        {
+            var cached = new List<string>();
+            var evicted = new List<string>();
+            foreach (var definition in _indexes.Values)
+            {
+                if (_cache.TryGetValue(DataCacheKey(definition.Index), out object? _))
+                {
+                    cached.Add(definition.Index);
+                }
+                else
+                {
+                    evicted.Add(definition.Index);
+                }
+            }
+            return new CacheStatsResponse
+            {
+                CacheSizeLimit = _dataStorage.CacheSizeLimit,
+                CachedCount = cached.Count,
+                CachedIndexes = cached.OrderBy(c => c, StringComparer.OrdinalIgnoreCase).ToList(),
+                EvictedIndexes = evicted.OrderBy(e => e, StringComparer.OrdinalIgnoreCase).ToList()
+            };
         }
 
         public List<IndexFieldDescription> GetFieldMappings(string indexName)
