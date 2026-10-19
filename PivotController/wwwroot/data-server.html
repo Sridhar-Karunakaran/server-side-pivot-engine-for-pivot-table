@@ -73,7 +73,24 @@
         <button onclick="putDataStorage()">Apply (PUT /api/config/datastorage)</button>
         <button onclick="getDataStorage()">Get current settings</button>
         <button onclick="testKeepData()">Test KeepDataOnRefresh (reloads with missing source)</button>
+        <button onclick="loadCacheStats()">Cache stats (cached vs evicted)</button>
         <pre id="dsOut">Current data storage settings not loaded.</pre>
+    </div>
+
+    <div class="card">
+        <b>Cache limit visualizer</b> — GET /api/config/datastorage/cache-stats.
+        With CacheSizeLimit below the number of loaded indexes you can watch LRU eviction:
+        entries move from <i>cachedIndexes</i> to <i>evictedIndexes</i>, and pivoting an
+        evicted index still returns 200 (transparent disk reload).
+        <div id="cacheStats" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+        <b>RetryAttempts demo</b> — creates an index pointing at a missing file;
+        the server console logs each retry with its backoff delay.
+        <button onclick="testRetry(1)">Create with retryAttempts=1</button>
+        <button onclick="testRetry(5)">Create with retryAttempts=5 (~8s)</button>
+        <pre id="retryOut">Watch the server console for "load attempt n/N failed ... Retrying in X ms" lines.</pre>
     </div>
 
     <!-- CLIENT-SIDE PIVOT TABLES -->
@@ -158,6 +175,31 @@
                 .then(r => r.json()).then(d => document.getElementById('dsOut').textContent =
                     'Reload response (502 means reload failed; with KeepDataOnRefresh=true the cached data keeps serving):\n' + json(d));
         }
+        function loadCacheStats() {
+            fetch(API + '/api/config/datastorage/cache-stats').then(r => r.json()).then(s => {
+                document.getElementById('cacheStats').innerHTML =
+                    '<table><tr><th>Limit</th><th>Cached</th><th>Cached indexes</th><th>Evicted (LRU)</th></tr>' +
+                    '<tr><td>' + s.cacheSizeLimit + '</td><td>' + s.cachedCount + '</td><td>' +
+                    s.cachedIndexes.join(', ') + '</td><td>' + (s.evictedIndexes.length ? s.evictedIndexes.join(', ') : '—') +
+                    '</td></tr></table>';
+                document.getElementById('dsOut').textContent = 'cache-stats →\n' + json(s);
+            });
+        }
+        function testRetry(attempts) {
+            fetch(API + '/api/config/datastorage', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: '{"retryAttempts":' + attempts + '}' })
+            .then(() => fetch(API + '/api/indexes', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: '{"index":"Retry-Demo","sourceType":"Csv","sourcePath":"no-such-file.csv"}' }))
+            .then(r => r.json().then(d => ({ code: r.status, body: d })))
+            .then(x => {
+                document.getElementById('retryOut').textContent =
+                    'POST /api/indexes (missing source) → HTTP ' + x.code + '\n' +
+                    'Server console now shows ' + attempts + ' retry attempts with exponential backoff.\n\n' + json(x.body);
+                fetch(API + '/api/indexes/Retry-Demo', { method: 'DELETE' });
+                fetch(API + '/api/config/datastorage', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                    body: '{"retryAttempts":' + document.getElementById('retryInput').value + '}' });
+            });
+        }
 
         // ---------- PIVOT TABLES ----------
         ej.base.enableRipple(false);
@@ -229,7 +271,7 @@
         pendingIndex = null;
 
         // initial loads
-        loadStatus(); getGeneral(); getDataStorage();
+        loadStatus(); getGeneral(); getDataStorage(); loadCacheStats();
     </script>
 </body>
 </html>
