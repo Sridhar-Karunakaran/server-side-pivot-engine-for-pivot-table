@@ -22,6 +22,22 @@ namespace PivotController.Configuration.Controllers
         public ActionResult<GeneralSettings> GetGeneral() => Ok(_general.Current);
 
         /// <summary>
+        /// Local testing helper (spec §1.3): emits one log message at each level via the
+        /// minimum-level-filtered provider. Messages below the configured MinimumLogLevel
+        /// are suppressed, so calling this before/after a level change shows the filter
+        /// working in the local console.
+        /// </summary>
+        [HttpPost("general/test-log")]
+        public IActionResult TestLog([FromServices] ILogger<ConfigController> logger)
+        {
+            logger.LogInformation("TEST-LOG: this is an Information message");
+            logger.LogWarning("TEST-LOG: this is a Warning message");
+            logger.LogError("TEST-LOG: this is an Error message");
+            logger.LogCritical("TEST-LOG: this is a Critical (Fatal) message");
+            return Ok(new { message = "Emitted Information/Warning/Error/Critical test log entries. Check the console/log output — entries below the current MinimumLogLevel are suppressed." });
+        }
+
+        /// <summary>
         /// Merge-patch of general settings. Only supplied properties change. Response reports
         /// requiresRestart: Port/DataFolder changes take effect after restart; MinimumLogLevel
         /// applies immediately.

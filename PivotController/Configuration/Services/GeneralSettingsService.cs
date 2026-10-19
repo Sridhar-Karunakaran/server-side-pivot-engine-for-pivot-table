@@ -16,16 +16,19 @@ namespace PivotController.Configuration.Services
         private readonly GeneralSettings _settings;
         private readonly AtomicJsonStore _store;
         private readonly IWebHostEnvironment _environment;
-        private readonly ILoggerFactory _loggerFactory;
+        private readonly MinimumLevelLoggerProvider _minLevelProvider;
         private readonly object _sync = new();
 
         public GeneralSettingsService(GeneralSettings settings, AtomicJsonStore store,
-            IWebHostEnvironment environment, ILoggerFactory loggerFactory)
+            IWebHostEnvironment environment, ILogger<GeneralSettingsService> logger,
+            MinimumLevelLoggerProvider minLevelProvider)
         {
             _settings = settings;
             _store = store;
             _environment = environment;
-            _loggerFactory = loggerFactory;
+            _minLevelProvider = minLevelProvider;
+            minLevelProvider.MinimumLevel = GeneralSettings.ToAspNetLogLevel(settings.MinimumLogLevel);
+            _ = logger;
         }
 
         public GeneralSettings Current
@@ -117,15 +120,13 @@ namespace PivotController.Configuration.Services
         }
 
         /// <summary>
-        /// Applies the minimum log level to the logging pipeline immediately (no restart).
-        /// Uses the logger factory's provider for filter updates when supported; otherwise
-        /// logs the change (filtering applies on the next provider reset).
+        /// Applies the minimum log level to the logging pipeline immediately (no restart,
+        /// spec §1.3): the MinimumLevelLoggerProvider filters out lower-severity messages
+        /// as soon as the level changes.
         /// </summary>
         public void ApplyLogLevel(LogLevelOption level)
         {
-            _ = GeneralSettings.ToAspNetLogLevel(level);
-            // Minimum log level is enforced through the configuration reload token below.
-            // (Live level switching for built-in providers goes through appsettings reload.)
+            _minLevelProvider.MinimumLevel = GeneralSettings.ToAspNetLogLevel(level);
         }
 
         /// <summary>Ensures the data folder and standard subdirectories exist and are writable.</summary>

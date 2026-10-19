@@ -25,10 +25,21 @@ if (generalValidation.Count > 0)
     Environment.Exit(1);
 }
 builder.Services.AddSingleton(generalSettings);
+// Runtime-adjustable minimum-level filter so General:MinimumLogLevel is observable in the
+// local console log output (spec §1.3). One shared MinimumLevelLoggerProvider instance is
+// registered both as the ILoggerProvider (replacing the default console provider) and as
+// a DI singleton that GeneralSettingsService flips live.
+builder.Logging.ClearProviders();
+builder.Logging.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Trace);
+var minimumLevelProvider = new PivotController.Configuration.Services.MinimumLevelLoggerProvider();
+builder.Logging.AddProvider(minimumLevelProvider);
+builder.Services.AddSingleton(minimumLevelProvider);
 builder.Services.AddSingleton<GeneralSettingsService>();
 builder.Services.AddHostedService<GeneralSettingsFileWatcher>();
-// Kestrel binds the configured General:Port (spec §1.2). ASPNETCORE_URLS still wins when set.
-if (builder.Configuration["urls"] is null || string.IsNullOrWhiteSpace(builder.Configuration["urls"]))
+// Kestrel binds the configured General:Port (spec §1.2). General:Port takes precedence
+// over the `urls` key (launchSettings applicationUrl would otherwise pin the port);
+// only an explicit ASPNETCORE_URLS environment variable overrides it.
+if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
 {
     builder.WebHost.UseUrls($"http://0.0.0.0:{generalSettings.Port}");
 }
