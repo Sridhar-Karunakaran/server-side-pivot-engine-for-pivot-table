@@ -1,4 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using PivotController.Configuration.Models;
 using PivotController.Indexing;
 
@@ -9,6 +11,18 @@ namespace PivotController.Configuration.Controllers
     public class IndexController : ControllerBase
     {
         private readonly IIndexManager _indexManager;
+
+        private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
+        private static JsonSerializerOptions CreateJsonOptions()
+        {
+            var options = new JsonSerializerOptions();
+            options.Converters.Add(new CsvDecimalSeparatorConverter());
+            options.Converters.Add(new CsvThousandsSeparatorConverter());
+            options.Converters.Add(new JsonStringEnumConverter());
+            options.PropertyNameCaseInsensitive = true;
+            return options;
+        }
 
         public IndexController(IIndexManager indexManager)
         {
@@ -106,8 +120,36 @@ namespace PivotController.Configuration.Controllers
         }
 
         [HttpPut("{index}")]
-        public async Task<ActionResult<IndexStatusResponse>> Edit(string index, [FromBody] IndexDefinition patch)
+        public async Task<ActionResult<IndexStatusResponse>> Edit(string index, [FromBody] JsonElement patchElement)
         {
+            IndexDefinition patch;
+            try
+            {
+                patch = patchElement.Deserialize<IndexDefinition>(JsonOptions);
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                return UnprocessableEntity(new { error = ex.Message });
+            }
+            if (patch == null)
+            {
+                return UnprocessableEntity(new { error = "Body must be an IndexDefinition JSON object." });
+            }
+            // SourceType is a non-nullable enum, so its absence cannot round-trip through
+            // model binding. When omitted from the patch body, back-fill it from the
+            // existing definition so EditIndexAsync's strict immutability check passes;
+            // a supplied-but-different value is rejected there with 422.
+            bool sourceTypeSpecified = patchElement.ValueKind == JsonValueKind.Object
+                && patchElement.TryGetProperty("sourceType", out var st)
+                && st.ValueKind != JsonValueKind.Null;
+            if (!sourceTypeSpecified)
+            {
+                if (!_indexManager.TryGetDefinition(index, out var current))
+                {
+                    return NotFound(new { error = $"Index '{index}' not found." });
+                }
+                patch.SourceType = current.SourceType;
+            }
             try
             {
                 var status = await _indexManager.EditIndexAsync(index, patch).ConfigureAwait(false);

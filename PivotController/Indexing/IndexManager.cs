@@ -281,7 +281,7 @@ namespace PivotController.Indexing
             {
                 throw new KeyNotFoundException($"Index '{indexName}' not found.");
             }
-            if (patch.SourceType != default && patch.SourceType != existing.SourceType)
+            if (patch.SourceType != existing.SourceType)
             {
                 throw new ArgumentException("SourceType is immutable");
             }
