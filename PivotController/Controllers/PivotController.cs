@@ -48,7 +48,11 @@ namespace PivotController.Controllers
             }
 
             // Index-aware routing: request body index -> controller default -> DefaultIndexId fallback.
-            string indexName = raw["index"]?.ToString() ?? raw["Index"]?.ToString() ?? ServerIndexName;
+            // Index-aware routing: body `index` field -> query ?index= -> controller default.
+            // The query form lets a page pin a pivot grid to its index without body patching.
+            string indexName = raw["index"]?.ToString() ?? raw["Index"]?.ToString()
+                ?? HttpContext.Request.Query["index"].FirstOrDefault()
+                ?? ServerIndexName;
             ApplyIndexFieldMapping(param, indexName);
             if (!_indexManager.TryGetDefinition(indexName, out _))
             {
