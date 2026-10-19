@@ -192,11 +192,247 @@ This phase is critical; all subsequent features depend on named indexes and Inde
 
 ---
 
-## Phase 2: General & Data Storage Settings
+## Phase 2: General Settings
+
+*Estimated: 2-3 days*
+
+This phase implements the core server settings (Port, MinimumLogLevel, DataFolder) with full configuration management and API exposure.
+
+### 2.1 Create GeneralSettings Model
+
+**Objective:** Implement the GeneralSettings class with validation and defaults
+
+**Subtasks:**
+- [ ] Create file: `PivotController/Configuration/Models/LogLevelOption.cs`
+  - Enum: Info, Warn, Error, Fatal
+  - ToString() returns uppercase (INFO, WARN, ERROR, FATAL)
+  - TryParse() supports case-insensitive parsing (info → Info)
+- [ ] Create file: `PivotController/Configuration/Models/GeneralSettings.cs`
+  - Properties with defaults:
+    - `Port: int = 9500` 
+    - `MinimumLogLevel: LogLevelOption = LogLevelOption.Info`
+    - `DataFolder: string = "DataSource"`
+  - Validation attributes on properties (if using FluentValidation or DataAnnotations)
+
+**Verification:**
+- [ ] Model compiles without warnings
+- [ ] Defaults match spec (Port 9500, MinimumLogLevel Info, DataFolder "DataSource")
+- [ ] JSON serialization/deserialization works correctly
+- [ ] LogLevelOption enum parses case-insensitively
+
+**Specification Mapping:** 0.1, 0.2, 0.3, 0.4
+
+---
+
+### 2.2 Implement Port Configuration and Validation
+
+**Objective:** Validate and configure Kestrel listener port
+
+**Subtasks:**
+- [ ] Add port validation logic:
+  - Must be between 1 and 65535
+  - Return validation error if outside range
+  - Store in GeneralSettings.Port
+- [ ] Modify `PivotController/Program.cs`:
+  - Read `General.Port` from configuration
+  - Pass to `WebApplication.CreateBuilder()` → `builder.WebHost.UseUrls($"http://localhost:{port}")`
+  - Log startup: "Data Server listening on http://localhost:{port}"
+  - On port binding failure, catch exception, log error, exit
+- [ ] Test configuration update behavior:
+  - Verify current port returned in status
+  - Port changes flagged as `requiresRestart: true`
+
+**Verification:**
+- [ ] Application starts on port 9500 (default)
+- [ ] Custom port via appsettings.json works (test with 5285, 8080)
+- [ ] Invalid port (0, 99999) rejected during configuration validation
+- [ ] Port binding failure caught and logged clearly
+- [ ] `requiresRestart: true` returned when Port changed via API
+- [ ] Existing tests still pass
+
+**Specification Mapping:** 0.2.1-0.2.10
+
+---
+
+### 2.3 Implement Minimum Log Level Configuration
+
+**Objective:** Support configurable logging level with runtime application
+
+**Subtasks:**
+- [ ] Modify `PivotController/Program.cs` (logging setup):
+  - Replace `AddConsole()` with custom setup
+  - Add rolling JSON file logger: `logs/dataserver-{yyyyMMdd}.jsonl` (30-day retention)
+  - Hook `MinimumLogLevel` from GeneralSettings
+  - Framework logs (Microsoft.AspNetCore.*) pinned to Warning
+  - Apply general MinimumLogLevel to application categories
+- [ ] Create file: `PivotController/Logging/DataServerLoggerProvider.cs` or use built-in `AddConsole()` + `AddFile()`
+  - Categories: Config, Security, Indexing, DatabaseQuery, ReportSharing, Https, Pivot
+  - Structured logging: { category, correlationId, index?, durationMs, rowCount?, error? }
+  - Pivot hit-logging at Debug level (not Info to avoid chattiness)
+- [ ] Implement LogLevelFilter to apply MinimumLogLevel at runtime
+  - File watcher or configuration change event triggers filter update
+  - No restart required
+
+**Verification:**
+- [ ] Application starts with Info-level logging (default)
+- [ ] Change MinimumLogLevel to Warn via API; Warn/Error/Fatal logged, Info/Debug filtered immediately
+- [ ] Console output reflects current level
+- [ ] Log file (JSONL) reflects current level
+- [ ] Framework logs stay at Warning regardless of setting
+- [ ] Log entries include structured fields (category, correlationId, etc.)
+
+**Specification Mapping:** 0.3.1-0.3.10
+
+---
+
+### 2.4 Implement Data Folder Configuration
+
+**Objective:** Validate and establish root directory for all data files
+
+**Subtasks:**
+- [ ] Add validation logic for DataFolder:
+  - Non-empty string required
+  - No path traversal (no `../` or `..\`)
+  - Create directory if not exists
+  - Check write permissions
+  - Resolve relative paths from `{workingDirectory}`
+  - Log error if not writable
+- [ ] Modify `PivotController/Program.cs`:
+  - Read `General.DataFolder` from configuration
+  - Resolve to absolute path
+  - Create if missing
+  - Ensure subdirectories: `{DataFolder}/reports/`, `{DataFolder}/logs/`
+  - Verify write access; exit with error if not writable
+  - Log: "Data folder: {resolvedPath}"
+- [ ] Ensure all data operations use this folder:
+  - Config files → `{DataFolder}/config.json`, `{DataFolder}/indexes.json`, `{DataFolder}/users.json`
+  - Reports → `{DataFolder}/reports/`
+  - Logs → `{DataFolder}/logs/`
+
+**Verification:**
+- [ ] Default "DataSource" folder created on startup
+- [ ] Custom DataFolder via appsettings.json works (absolute and relative paths)
+- [ ] Empty DataFolder rejected (422 error)
+- [ ] Path traversal (`../../`) rejected (422 error)
+- [ ] No-write-permission detected and logged; exit with error
+- [ ] Subdirectories created automatically
+- [ ] All data files stored in correct locations
+
+**Specification Mapping:** 0.4.1-0.4.10
+
+---
+
+### 2.5 Create Configuration Persistence Service (Atoms Writes)
+
+**Objective:** Implement atomic write/read for configuration files
+
+**Subtasks:**
+- [ ] Create file: `PivotController/Configuration/Services/AtomicJsonStore.cs`
+  - LoadAsync(filePath) — deserialize JSON file
+  - SaveAsync(filePath, data) — write to temp file, then rename (atomic)
+  - Handles corruption: rename .corrupt.{timestamp}
+- [ ] Modify `ConfigurationPersistenceService.cs` (from Phase 1):
+  - LoadAsync() — reads from `{DataFolder}/config.json`
+  - SaveAsync(config) — atomically writes using AtomicJsonStore
+  - EnsureFilesAsync() — creates DataFolder, initializes missing JSON files with defaults
+
+**Verification:**
+- [ ] Configuration loaded correctly from file
+- [ ] Configuration saved atomically (temp → rename, not direct overwrite)
+- [ ] Corrupt JSON renamed to .corrupt.{timestamp}, defaults used
+- [ ] Application recovers with defaults after corruption
+
+**Specification Mapping:** 0.7.1-0.7.4, 11
+
+---
+
+### 2.6 Implement Configuration API Endpoints
+
+**Objective:** Expose full General Settings via REST API
+
+**Subtasks:**
+- [ ] Create file: `PivotController/Configuration/Controllers/ConfigController.cs`
+  - `GET /api/config/general` — return current GeneralSettings + requiresRestart flag
+  - `PUT /api/config/general` — update via merge-patch
+    - Validate each field
+    - Return 422 with field errors if invalid
+    - Return 200 with updated settings + requiresRestart flag
+  - `GET /api/config` — return full configuration (all 7 sections) [for Phase 2B]
+  - `PUT /api/config` — update full config [for Phase 2B]
+- [ ] Response format: `{ success: true, general: {...}, requiresRestart: false/true, message?: string }`
+- [ ] Add BasicAuth middleware check (when Security settings implement it in Phase 5)
+
+**Verification:**
+- [ ] GET /api/config/general returns Port, MinimumLogLevel, DataFolder
+- [ ] PUT /api/config/general { minimumLogLevel: "Error" } applies change, returns requiresRestart: false
+- [ ] PUT /api/config/general { port: 5286 } returns requiresRestart: true
+- [ ] PUT /api/config/general { port: 0 } returns 422 with error message
+- [ ] PUT /api/config/general { dataFolder: "" } returns 422 with error message
+
+**Specification Mapping:** 0.5.1-0.5.4
+
+---
+
+### 2.7 Implement Hot-Reload for Runtime-Applicable Settings
+
+**Objective:** Apply MinimumLogLevel changes without restart; persist and validate Port/DataFolder changes
+
+**Subtasks:**
+- [ ] Create file: `PivotController/Configuration/Services/ConfigurationFileWatcher.cs`
+  - Monitor `{DataFolder}/config.json` for changes
+  - On change: call ConfigurationService.ApplyAsync(newConfig)
+  - For runtime-applicable settings: apply immediately
+  - For restart-required settings: flag but do not apply
+- [ ] Implement ConfigurationService.ApplyAsync():
+  - Load new config from file
+  - Validate
+  - For MinimumLogLevel: update logger filter immediately
+  - For other settings: update config object but flag requiresRestart
+  - On error: log, quarantine corrupt file, revert to previous
+
+**Verification:**
+- [ ] Edit `config.json` directly (MinimumLogLevel change)
+- [ ] Change detected within 1 second
+- [ ] New log level applied immediately to new log entries
+- [ ] No need for server restart
+- [ ] Edit Port in config.json; change detected but not applied; requiresRestart: true
+- [ ] Corrupt config.json renamed to .corrupt.{timestamp}; old config continues
+
+**Specification Mapping:** 0.7.2-0.7.4
+
+---
+
+### 2.8 Unit Tests for General Settings
+
+**Objective:** Comprehensive test coverage for General Settings functionality
+
+**Subtasks:**
+- [ ] Create file: `PivotController.Tests/Configuration/GeneralSettingsTests.cs`
+  - Test Port validation (range, boundaries)
+  - Test MinimumLogLevel enum parsing (case-insensitive, all 4 levels)
+  - Test DataFolder validation (empty, traversal, permissions)
+  - Test configuration API (GET, PUT merge-patch)
+  - Test requiresRestart flag (Port yes, DataFolder yes, MinimumLogLevel no)
+  - Test hot-reload (MinimumLogLevel changes apply immediately)
+  - Test atomic writes (no corruption on partial write)
+  - Test corruption recovery
+- [ ] Use xUnit or existing test framework
+- [ ] Test edge cases: special characters in folder names, Unicode, etc.
+
+**Verification:**
+- [ ] All tests pass
+- [ ] Code coverage ≥ 80% for GeneralSettings-related code
+- [ ] Test files compile and run cleanly
+
+**Specification Mapping:** 0.1-0.7
+
+---
+
+## Phase 3: Data Storage Settings & Configuration Models
 
 *Estimated: 1-2 days*
 
-### 2.1 Create Configuration Models
+### 3.1 Create Configuration Models
 
 **Objective:** Implement all 7 configuration sections per spec
 
@@ -261,11 +497,11 @@ This phase is critical; all subsequent features depend on named indexes and Inde
 
 ---
 
-## Phase 3: Database Query Settings
+## Phase 4: Database Query Settings
 
 *Estimated: 1-2 days*
 
-### 3.1 Database Provider Abstraction
+### 4.1 Database Provider Abstraction
 
 **Objective:** Implement pluggable database provider pattern
 
