@@ -1,9 +1,25 @@
+using PivotController.Configuration.Models;
+using PivotController.Configuration.Services;
+using PivotController.Core.Persistence;
+using PivotController.Data.Providers;
+using PivotController.Indexing;
+
 var builder = WebApplication.CreateBuilder(args);
 var CustomOrigins = "_customOrigins";
-// Add services to the container.
 
-builder.Services.AddControllers();
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+// Data Server configuration (Index Configuration — Step 1).
+var dataServerSettings = builder.Configuration.GetSection(DataServerSettings.SectionName).Get<DataServerSettings>() ?? new DataServerSettings();
+builder.Services.AddSingleton(dataServerSettings);
+builder.Services.AddSingleton<AtomicJsonStore>();
+builder.Services.AddSingleton<IndexStore>();
+builder.Services.AddSingleton<IDataSourceProviderFactory, DataSourceProviderFactory>();
+builder.Services.AddSingleton<IIndexManager, IndexManager>();
+builder.Services.AddHostedService<IndexReloadWorker>();
+
+builder.Services.AddControllers().AddJsonOptions(options =>
+{
+    options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddCors(options =>
@@ -20,6 +36,10 @@ builder.Services.AddMemoryCache((options) =>
 });
 
 var app = builder.Build();
+
+// Bootstrap: register indexes from appsettings.json and DataServer/indexes.json, preload enabled ones.
+var indexManager = app.Services.GetRequiredService<IIndexManager>();
+await indexManager.RegisterAllAsync();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
