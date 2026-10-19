@@ -217,7 +217,22 @@ namespace PivotController.Indexing
                     _logger.LogInformation("Index '{Index}' is disabled; data not preloaded.", definition.Index);
                     continue;
                 }
-                await LoadAsync(definition, manual: false).ConfigureAwait(false);
+                try
+                {
+                    await LoadAsync(definition, manual: false).ConfigureAwait(false);
+                }
+                catch (ReloadFailedKeepDataException)
+                {
+                    // Preload failed but KeepDataOnRefresh retained prior data (none at bootstrap).
+                    _logger.LogWarning("Index '{Index}' preload failed; cached data retained.", definition.Index);
+                }
+                catch (Exception ex)
+                {
+                    // A bad index definition must not prevent the server from starting;
+                    // the index is registered with Failed status and can be fixed/deleted via API.
+                    SetStatus(definition.Index, IndexStatus.Failed, 0, null, ex.Message);
+                    _logger.LogError(ex, "Index '{Index}' preload failed at startup; status set to Failed.", definition.Index);
+                }
             }
         }
 
@@ -439,6 +454,8 @@ namespace PivotController.Indexing
                         if (attempt < _dataStorage.RetryAttempts)
                         {
                             var delay = TimeSpan.FromMilliseconds(250 * Math.Pow(2, attempt) * (0.8 + Random.Shared.NextDouble() * 0.4));
+                            _logger.LogWarning("Index '{Index}' load attempt {Attempt}/{Attempts} failed: {Error}. Retrying in {Delay:F0} ms...",
+                                definition.Index, attempt + 1, _dataStorage.RetryAttempts, ex.Message, delay.TotalMilliseconds);
                             await Task.Delay(delay).ConfigureAwait(false);
                         }
                     }
