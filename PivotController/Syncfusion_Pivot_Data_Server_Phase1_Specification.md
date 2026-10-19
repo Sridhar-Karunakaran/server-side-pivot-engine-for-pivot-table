@@ -1,10 +1,11 @@
-# Custom Data Server (Flexmonster-compatible) — Phase 1 Detailed Technical Specification
+# Syncfusion Pivot Table Data Server — Phase 1 Detailed Technical Specification
 
 ## Document Information
 
 - **Version:** 2.1
 - **Phase:** Phase 1 – Backend Infrastructure + Client Integration
-- **Scope:** Server-Side Controller, Configuration Management, Index Configuration (full Flexmonster Indexes-tab parity: multiple JSON/CSV/DB sources, edit, reload, enable/disable, mapping, refresh time), JSON File-Driven Configuration Testing, Client-Side Sample Configuration
+- **Scope:** Server-Side Controller, Configuration Management, Index Configuration (full Indexes-tab parity: multiple JSON/CSV/DB sources, edit, reload, enable/disable, mapping, refresh time), JSON File-Driven Configuration Testing, Client-Side Sample Configuration
+- **Note:** This feature is a Syncfusion Pivot Table data server, functionally similar to the Flexmonster Data Server (which serves Flexmonster Pivot Table); the Flexmonster design is referenced where its behavior is adopted.
 - **Out of Scope:** Admin Panel UI, Monitoring UI, Diagnostics UI
 - **Repository:** `server-side-pivot-engine-for-pivot-table` → `PivotController/`
 
@@ -12,13 +13,13 @@
 
 # 1. Purpose
 
-This document defines the detailed technical specification for a Flexmonster Data Server-compatible backend controller that supports configuration-driven indexing, security, HTTPS, report sharing, logging, and data connectivity — used by the Syncfusion Pivot Table in server mode.
+This document defines the detailed technical specification for a backend data server for the **Syncfusion Pivot Table** that supports configuration-driven indexing, security, HTTPS, report sharing, logging, and data connectivity — used by the Syncfusion Pivot Table in server mode. The feature is functionally similar to the Flexmonster Data Server, which serves the Flexmonster Pivot Table; its design is used as a reference where noted.
 
-Phase 1 delivers all backend functionality required by the Flexmonster Admin Panel **without implementing the Admin Panel itself**. The implementation order within Phase 1 is:
+Phase 1 delivers all backend functionality required by the future Syncfusion Admin Panel **without implementing the Admin Panel itself**. The implementation order within Phase 1 is:
 
 1. **Step 1 — Index Configuration (backend).** Indexes are named, registered in `appsettings.json`, and managed by the server. This is the first implementation step because every other feature (pivot routing, caching, database query settings, report sharing) depends on a named-index model.
 2. **Steps 2–7 — Remaining settings sections.** General, Data Storage, Database Query, HTTPS, Security, and Report Sharing settings are implemented as configurable, persisted models exposing APIs for the future Admin Panel.
-3. **Step 8 (final) — Client-side pivot table sample configuration.** The sample pivot table is updated to pass the index name, exactly as Flexmonster passes `index` in its `api` data source. After this step the data server exposes a simple endpoint URL (e.g., `http://localhost:5285/api/pivot/post`); the Admin Panel (Phase 2) will point to this same backend to read/update all data server settings.
+3. **Step 8 (final) — Client-side pivot table sample configuration.** The sample pivot table is updated to pass the index name, similar to how Flexmonster passes `index` in its `api` data source. After this step the data server exposes a simple endpoint URL (e.g., `http://localhost:5285/api/pivot/post`); the Admin Panel (Phase 2) will point to this same backend to read/update all data server settings.
 
 ---
 
@@ -26,7 +27,7 @@ Phase 1 delivers all backend functionality required by the Flexmonster Admin Pan
 
 The server-side controller shall:
 
-- Register and serve **named indexes** configured in `appsettings.json` (Flexmonster parity).
+- Register and serve **named indexes** configured in `appsettings.json` (similar to the Flexmonster Data Server's approach).
 - Accept an **index name from the client** on every pivot request and route to the correct dataset.
 - Manage index lifecycle (create, reload, delete, persist metadata).
 - Support JSON, CSV, and Database sources.
@@ -36,7 +37,7 @@ The server-side controller shall:
 - Support structured Logging with configurable minimum level.
 - Persist configurations and expose REST APIs for the future Admin Panel.
 - Expose a simple, stable endpoint URL (e.g., `http://localhost:5285/api/pivot/post`) that the Admin Panel will target in Phase 2 to update server settings at runtime.
-- Support full Flexmonster Indexes-tab parity: add indexes from multiple JSON/CSV files and multiple databases; edit indexes (everything except the data source type); reload indexes manually and on a configured refresh time; enable/disable indexes; per-field Mapping (Number/String/Date) with autodetect as default; CSV delimiter/decimal/thousands separator options; database connection-string Test.
+- Support full Indexes-tab parity (similar to the Flexmonster Data Server's Indexes tab): add indexes from multiple JSON/CSV files and multiple databases; edit indexes (everything except the data source type); reload indexes manually and on a configured refresh time; enable/disable indexes; per-field Mapping (Number/String/Date) with autodetect as default; CSV delimiter/decimal/thousands separator options; database connection-string Test.
 - Support JSON file-driven configuration testing: every Data Server option is editable in a runtime JSON settings file whose changes are detected and applied to the running backend without code changes (hot-applied where possible, flagged `requiresRestart` otherwise), so each Phase 1 setting can be verified by editing the file alone.
 
 ---
@@ -45,7 +46,7 @@ The server-side controller shall:
 
 ## 3.1 Index Configuration is the first step
 
-Index configuration is the foundation of the data server. Named indexes are resolved at startup from **`appsettings.json`** — this mirrors Flexmonster, which updates `appsettings.json` for its indexing option. Precedence for index metadata:
+Index configuration is the foundation of the data server. Named indexes are resolved at startup from **`appsettings.json`** — this follows the Flexmonster Data Server approach, which updates `appsettings.json` for its indexing option. Precedence for index metadata:
 
 ```
 appsettings.json (initial source of truth, edited by the developer)
@@ -53,9 +54,9 @@ appsettings.json (initial source of truth, edited by the developer)
 DataServer/indexes.json  (runtime-managed copy, editable via /api/indexes)
 ```
 
-## 3.2 Client passes the index name (Flexmonster `api` contract)
+## 3.2 Client passes the index name (similar to the Flexmonster `api` contract)
 
-Flexmonster connects to the Data Server with:
+For reference, Flexmonster connects to its Data Server with:
 
 ```js
 dataSource: {
@@ -84,9 +85,9 @@ After Phase 1, the running data server exposes one simple endpoint URL, e.g. `ht
 
 ```text
 +------------------------------+
-| Flexmonster Pivot Table      |      Syncfusion PivotView (Sample)
-| dataSource: { type: "api",   |      dataSourceSettings: { url, index }
-|   url, index: "Sales-Data" } |      (index sent on every request)
+| Syncfusion Pivot Table       |      Syncfusion PivotView (Sample)
+| dataSourceSettings: { url,   |      (index sent on every request)
+|   index: "Sales-Data" }      |      
 +------------------------------+
             |
             |  POST /api/pivot/post  { ..., index: "Sales-Data" }
@@ -392,9 +393,9 @@ public class ReportSharingSettings
 
 ## 6.7 Index Configuration (Step 1 — the first implementation step)
 
-### Registration in `appsettings.json` (Flexmonster parity)
+### Registration in `appsettings.json` (similar to the Flexmonster approach)
 
-Following the Flexmonster approach, indexes are declared in `appsettings.json`. The existing `PivotDataSource` section is extended so the index **name** and its data source **type/path/query** live together:
+Indexes are declared in `appsettings.json`. The existing `PivotDataSource` section is extended so the index **name** and its data source **type/path/query** live together:
 
 ```json
 {
@@ -464,20 +465,20 @@ public class IndexDefinition
 {
     public required string Index { get; set; }   // index name, e.g. "Sales-Data" (unique, immutable)
     public required string Name { get; set; }    // display name
-    public DataSourceType SourceType { get; set; } // immutable after creation (Flexmonster edit rule)
+    public DataSourceType SourceType { get; set; } // immutable after creation (Flexmonster-like edit rule)
     public string? SourcePath { get; set; }      // JSON/CSV path under DataFolder
-    // CSV-specific (Flexmonster parity)
+    // CSV-specific (Flexmonster-like options)
     public char CsvDelimiter { get; set; } = ',';
     public char CsvDecimalSeparator { get; set; } = '.';
     public char CsvThousandsSeparator { get; set; } = ',';
-    // Database-specific (Flexmonster parity)
+    // Database-specific (Flexmonster-like options)
     public DatabaseType? DatabaseType { get; set; }
     public string? ConnectionStringName { get; set; } // references ConnectionStrings (never inline secrets)
     public string? Query { get; set; }
-    // Refresh time (Flexmonster parity: minutes from server start; 0 = never reload)
+    // Refresh time (minutes from server start; 0 = never reload)
     public bool AutoReload { get; set; } = false;
     public int ReloadIntervalMinutes { get; set; } // >0 requires AutoReload=true
-    // Mapping (Flexmonster parity: disabled by default = autodetect)
+    // Mapping (disabled by default = autodetect)
     public bool MappingEnabled { get; set; } = false;
     public List<IndexFieldMapping>? FieldMappings { get; set; } // cleared when MappingEnabled=false
     public bool Enabled { get; set; } = true;   // disabled indexes are not preloaded/served
@@ -508,11 +509,11 @@ public class IndexFieldMapping
 - Case-insensitive uniqueness; immutable after creation; pattern `[A-Za-z0-9._-]{1,64}`.
 - Pivot requests without an index use `DataServer:DefaultIndexId`.
 
-### Flexmonster Indexes-Tab Parity (new in v2.1)
+### Indexes-Tab Parity (new in v2.1, similar to the Flexmonster Indexes tab)
 
 **Add Index.** An index may point at any JSON file, CSV file, or supported database. Multiple indexes — including several JSON/CSV files and several databases — coexist in the `Indexes` array; each is loaded and cached independently under `data:{index}`.
 
-**Edit Index.** Every property is editable except `SourceType` (Flexmonster rule: the data source type cannot be changed after creation). Editing is applied via `PUT /api/indexes/{index}` (or by editing the settings JSON file, see §12.5); a successful edit persists metadata and reloads the index data.
+**Edit Index.** Every property is editable except `SourceType` (the data source type cannot be changed after creation, matching the Flexmonster rule). Editing is applied via `PUT /api/indexes/{index}` (or by editing the settings JSON file, see §12.5); a successful edit persists metadata and reloads the index data.
 
 **Delete Index.** `DELETE /api/indexes/{index}` removes metadata and evicts `data:{index}` + `engine:{index}:*`. Consumers are prompted to confirm (Phase 2 UI parity; Phase 1 exposes the endpoint).
 
@@ -522,11 +523,11 @@ public class IndexFieldMapping
 
 **Mapping (JSON/CSV only).** Disabled by default — all field types are autodetected. When enabled, each field's type can be set to **Number**, **String**, or **Date**. Disabling Mapping deletes all adjustments and reverts to autodetection. Applies on next load/edit-save.
 
-**CSV separators.** `CsvDelimiter` (default `,`), `CsvDecimalSeparator` (default `.`), `CsvThousandsSeparator` (default `,`) mirror the Flexmonster CSV index options.
+**CSV separators.** `CsvDelimiter` (default `,`), `CsvDecimalSeparator` (default `.`), `CsvThousandsSeparator` (default `,`) mirror the Flexmonster Data Server's CSV index options.
 
 **Database Test.** `POST /api/indexes/{index}/test-connection` executes `SELECT 1` against the configured connection and returns `200 { success: true, latencyMs }` or `502 { success: false, error }`.
 
-**Connection-string password rule (Flexmonster parity).** `;` and `"` are treated as delimiters. Passwords containing them must be enclosed in single quotes, e.g. `Pwd='123;"45'`. The connection-string parser must implement this rule for inline test strings; persisted production indexes continue to reference `ConnectionStrings:Name` (no inline secrets).
+**Connection-string password rule (Flexmonster-like).** `;` and `"` are treated as delimiters. Passwords containing them must be enclosed in single quotes, e.g. `Pwd='123;"45'`. The connection-string parser must implement this rule for inline test strings; persisted production indexes continue to reference `ConnectionStrings:Name` (no inline secrets).
 
 ### Index Lifecycle
 
@@ -823,9 +824,9 @@ Response `201`:
 
 # 10. Client-Side Integration (final Phase 1 step)
 
-## 10.1 Flexmonster reference contract
+## 10.1 Flexmonster reference contract (for similarity only)
 
-Flexmonster connects to the Data Server by index name:
+For reference, the Flexmonster client connects to its Data Server by index name (the Syncfusion equivalent is shown in §10.2):
 
 ```js
 dataSource: {
@@ -957,7 +958,7 @@ await boot.EnsureDefaultIndexAsync(); // one-time legacy PivotDataSource → "de
 ## 12.4 Auto-Reload
 
 - `AutoReload=true` + `ReloadIntervalMinutes>0` → `PeriodicTimer` per index.
-- Refresh time is measured from Data Server startup (Flexmonster semantics); `0` = never reload.
+- Refresh time is measured from Data Server startup (Flexmonster-like semantics); `0` = never reload.
 - Reload failures are logged, never crash the host; `KeepDataOnRefresh` governs continuity.
 
 ## 12.5 JSON File-Driven Configuration Testing (new in v2.1)
@@ -1076,7 +1077,7 @@ Validate Query (single SELECT, no ';')
 
 - Stored by name in `appsettings.json` `ConnectionStrings` or user-secrets; referenced via `ConnectionStringName`.
 - Never persisted in `config.json` or `indexes.json`.
-- Inline connection strings supplied to the Test-connection endpoint are parsed with the Flexmonster password rule (§6.7): `;` and `"` are delimiters; passwords containing them must be single-quoted (e.g., `Pwd='123;"45'`).
+- Inline connection strings supplied to the Test-connection endpoint are parsed with the Flexmonster-like password rule (§6.7): `;` and `"` are delimiters; passwords containing them must be single-quoted (e.g., `Pwd='123;"45'`).
 
 ---
 
@@ -1454,10 +1455,10 @@ Tests/PivotController.Tests/                   (xUnit)
 2. For DB providers beyond SQLite, are additional NuGet packages in the csproj acceptable, or must they be runtime-swappable plugins?
 3. Should the `General.DataFolder` default remain `DataSource`, or move to `DataServer/data`?
 4. Confirm the log file location convention and retention period (proposed `logs/`, 30 days).
-5. Confirm the primary sample port — `5285` (current `launchSettings.json` http profile) vs. `9500` (Flexmonster default `General.Port`).
+5. Confirm the primary sample port — `5285` (current `launchSettings.json` http profile) vs. `9500` (Flexmonster default `General.Port`, for reference).
 
 ---
 
 # Conclusion
 
-Phase 1 delivers a backend-first data server where **index configuration is implemented first**, indexes are declared in `appsettings.json` (Flexmonster style) with full **Indexes-tab parity** — multiple JSON/CSV/DB sources, editable indexes, manual and refresh-time reloads, enable/disable, per-field Mapping, CSV separators, and connection testing — **the client passes the index name on every pivot request**, and the **final step wires the client-side pivot table sample** to the data server's simple endpoint URL. Every Data Server option is additionally verifiable through the **JSON settings file hot-reload loop (§12.5)**, so each Phase 1 setting can be tested by editing a value in `DataServer/config.json` without code changes. All seven Data Server settings sections — General, Data Storage, Database Query, HTTPS, Security, Report Sharing, and Index Configuration — are configurable server-side with documented defaults, validation, persistence, and management APIs. After Phase 1, the data server exposes `{url}/api/pivot/post` plus a complete management API surface, so the Phase 2 Admin Panel can update all backend settings without architectural changes.
+Phase 1 delivers a backend-first data server where **index configuration is implemented first**, indexes are declared in `appsettings.json` with full **Indexes-tab parity** (similar to the Flexmonster Data Server) — multiple JSON/CSV/DB sources, editable indexes, manual and refresh-time reloads, enable/disable, per-field Mapping, CSV separators, and connection testing — **the client passes the index name on every pivot request**, and the **final step wires the client-side pivot table sample** to the data server's simple endpoint URL. Every Data Server option is additionally verifiable through the **JSON settings file hot-reload loop (§12.5)**, so each Phase 1 setting can be tested by editing a value in `DataServer/config.json` without code changes. All seven Data Server settings sections — General, Data Storage, Database Query, HTTPS, Security, Report Sharing, and Index Configuration — are configurable server-side with documented defaults, validation, persistence, and management APIs. After Phase 1, the data server exposes `{url}/api/pivot/post` plus a complete management API surface, so the Phase 2 Admin Panel can update all backend settings without architectural changes.
