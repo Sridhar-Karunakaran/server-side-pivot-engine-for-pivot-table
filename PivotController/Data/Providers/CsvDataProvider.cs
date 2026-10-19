@@ -30,7 +30,7 @@ namespace PivotController.Data.Providers
             }
 
             var header = rows[0];
-            var mappings = definition.MappingEnabled
+            var mappings = definition.MappingEnabled == true
                 ? definition.FieldMappings?.ToDictionary(m => m.FieldName, m => m.Type, StringComparer.OrdinalIgnoreCase)
                 : null;
 

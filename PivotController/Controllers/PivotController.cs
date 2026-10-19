@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using System.Dynamic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
@@ -49,6 +49,7 @@ namespace PivotController.Controllers
 
             // Index-aware routing: request body index -> controller default -> DefaultIndexId fallback.
             string indexName = raw["index"]?.ToString() ?? raw["Index"]?.ToString() ?? ServerIndexName;
+            ApplyIndexFieldMapping(param, indexName);
             if (!_indexManager.TryGetDefinition(indexName, out _))
             {
                 return NotFound(new { error = $"Index '{indexName}' not found.", validIndexes = _indexManager.ListIndexes().Select(s => s.Index).ToArray() });
@@ -92,6 +93,47 @@ namespace PivotController.Controllers
             {
                 return await GetPivotValues(param, indexName).ConfigureAwait(false);
             }
+        }
+
+        /// <summary>
+        /// Applies the indexed data source's server-side field mappings to the request so the
+        /// pivot engine types each field accordingly. The engine reads this dictionary first in
+        /// GetFieldType, so a data type changed in the Data Server is reflected in the client
+        /// pivot table (aggregation, sorting, grouping) on the next request.
+        /// </summary>
+        private void ApplyIndexFieldMapping(FetchData param, string indexName)
+        {
+            if (!_indexManager.TryGetDefinition(indexName, out var definition)
+                || definition.MappingEnabled != true
+                || definition.FieldMappings is not { Count: > 0 })
+            {
+                return;
+            }
+            param.InternalProperties ??= new CustomProperties();
+            param.InternalProperties.FieldType = definition.FieldMappings.ToDictionary(
+                m => m.FieldName,
+                m => m.Type == Configuration.Models.MappingDataType.Number ? "number"
+                   : m.Type == Configuration.Models.MappingDataType.Date ? "datetime"
+                   : "string",
+                StringComparer.OrdinalIgnoreCase);
+            // FieldMapping (FieldOptions.DataType) takes precedence over the engine's value
+            // autodetection, so a mapping change fully controls the field type delivered to
+            // the client pivot table — including demoting a numeric/date field to string.
+            if (param.DataSourceSettings != null)
+            {
+                param.DataSourceSettings.FieldMapping = definition.FieldMappings.Select(m => new FieldOptions
+                {
+                    Name = m.FieldName,
+                    DataType = m.Type switch
+                    {
+                        Configuration.Models.MappingDataType.Number => "number",
+                        Configuration.Models.MappingDataType.Date => "datetime",
+                        _ => "string"
+                    }
+                }).ToList();
+            }
+            // Mapping affects engine field types, so cached engines per hash must be rebuilt.
+            _indexManager.EvictEngineCache(indexName);
         }
 
         private async Task<EngineProperties> GetEngine(FetchData param, string indexName)

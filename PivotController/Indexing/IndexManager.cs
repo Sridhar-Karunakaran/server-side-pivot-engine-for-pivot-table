@@ -181,12 +181,18 @@ namespace PivotController.Indexing
             {
                 existing.ReloadIntervalMinutes = patch.ReloadIntervalMinutes;
             }
-            if (patch.MappingEnabled || patch.FieldMappings != null)
+            if (patch.MappingEnabled.HasValue || patch.FieldMappings != null)
             {
-                existing.MappingEnabled = patch.MappingEnabled;
-                existing.FieldMappings = patch.MappingEnabled
-                    ? (patch.FieldMappings ?? existing.FieldMappings)
-                    : null;
+                // Explicit false disables mapping; omitted keeps current state.
+                existing.MappingEnabled = patch.MappingEnabled ?? (patch.FieldMappings != null);
+                if (existing.MappingEnabled == true)
+                {
+                    existing.FieldMappings = patch.FieldMappings ?? existing.FieldMappings;
+                }
+                else
+                {
+                    existing.FieldMappings = null;
+                }
             }
             existing.UpdatedAt = DateTime.UtcNow;
             Persist();

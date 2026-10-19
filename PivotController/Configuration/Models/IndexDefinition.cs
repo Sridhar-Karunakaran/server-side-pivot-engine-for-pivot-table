@@ -19,7 +19,8 @@ namespace PivotController.Configuration.Models
         public string? Query { get; set; }
         public bool AutoReload { get; set; } = false;
         public int ReloadIntervalMinutes { get; set; } = 0;
-        public bool MappingEnabled { get; set; } = false;
+        /// <summary>Nullable so PUT can distinguish "explicitly false" from "not specified".</summary>
+        public bool? MappingEnabled { get; set; }
         public List<IndexFieldMapping>? FieldMappings { get; set; }
         public bool Enabled { get; set; } = true;
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
