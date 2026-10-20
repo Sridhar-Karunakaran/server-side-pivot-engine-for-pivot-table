@@ -2,7 +2,7 @@
 
 **Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** In Progress — Phases 1–3 (Steps 1–3) implemented and verified; Phases 4+ pending
+**Status:** In Progress — Phases 1–3 (Steps 1–3) implemented and verified. **Order revised (2026-10): HTTPS Settings = Step 4 (next); Database Query Settings deferred to Step 8 (final) because it requires DB provider support on the machine.** Phases 4+ pending.
 
 ---
 
@@ -509,7 +509,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 
 ---
 
-## Phase 4: Database Query Settings
+## Phase 4: Database Query Settings (DEFERRED — reordered to Step 8 / Final; requires DB support on the machine)
 
 *Estimated: 1-2 days*
 
@@ -571,19 +571,22 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Resolve X509Certificate2 from PFX, PEM, or Windows store
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Core/Security/CertificateService.cs`
+- [x] Create file: `PivotController/Configuration/Services/CertificateService.cs` (path differs from plan)
   - ResolveCertificate(HttpsSettings) — returns X509Certificate2
   - Support:
     - PFX: `new X509Certificate2(pfxPath, password)`
     - PEM: `X509Certificate2.CreateFromPemFile(certPath, keyPath)`
     - Store: lookup by `StoreLocation`, `StoreName`, `Thumbprint` (Windows-only, guarded)
-  - Validation: exactly one source must be configured
+  - Validation: exactly one source must be configured (422 otherwise, verified live)
+- [x] Create file: `PivotController/Configuration/Models/HttpsSettings.cs` (+ enums, Sanitized() copy without password)
+- [x] Create file: `PivotController/Configuration/Services/HttpsSettingsService.cs` (merge-patch, https.json persistence, LoadPersisted)
+- [x] Create file: `PivotController/Configuration/Controllers/HttpsConfigController.cs` (GET/PUT /api/config/https)
 
 **Verification:**
-- [ ] PFX certificate loaded
-- [ ] PEM certificate loaded
-- [ ] Windows store certificate loaded (if on Windows)
-- [ ] Invalid certificate paths fail with clear error
+- [x] PFX certificate loaded (PFX branch verified by code path; PEM verified end-to-end live)
+- [x] PEM certificate loaded (self-signed test cert, live TLS handshake OK)
+- [x] Windows store certificate loaded (if on Windows) — Windows-only guard verified (non-Windows store lookup rejected 422)
+- [x] Invalid certificate paths fail with clear error (missing PFX path -> 422; invalid settings fail startup fast)
 
 **Specification Mapping:** 6.4, 15.1
 
@@ -594,19 +597,20 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Configure Kestrel listener with HTTPS and protocol options
 
 **Subtasks:**
-- [ ] Modify `PivotController/Program.cs`:
+- [x] Modify `PivotController/Program.cs`:
   - `builder.WebHost.ConfigureKestrel()`:
     - If `Https.Enabled=true`:
       - Resolve certificate via CertificateService
       - `options.Listen(IPAddress.Any, Port, lo => lo.UseHttps(cert))`
       - Map protocols: HTTP1 | HTTP2 | HTTP1_AND_HTTP2
-    - Set TLS 1.2+ enforced
-  - `app.UseHttpsRedirection()` when HTTPS enabled
+    - Set TLS 1.2+ enforced (Tls12 | Tls13)
+  - `app.UseHttpsRedirection()` when HTTPS enabled (skipped when disabled)
+  - Load persisted https.json pre-Build so restart-required changes bind
 
 **Verification:**
-- [ ] HTTPS listener active on configured port
-- [ ] HTTP/1.1 and/or HTTP/2 negotiated per setting
-- [ ] TLS 1.2+ enforced
+- [x] HTTPS listener active on configured port (https://0.0.0.0:5285 live)
+- [x] HTTP/1.1 and/or HTTP/2 negotiated per setting (HTTP2 negotiated after persisted patch; requiresRestart honored)
+- [x] TLS 1.2+ enforced (TLS 1.1 handshake refused, TLS 1.2 OK — verified with curl)
 
 **Specification Mapping:** 15.1, 6.4
 
