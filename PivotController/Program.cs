@@ -66,8 +66,8 @@ if (System.IO.File.Exists(httpsPersistedPath))
     httpsSettings.StoreLocation = httpsPersisted.StoreLocation;
     httpsSettings.StoreName = httpsPersisted.StoreName;
     httpsSettings.Thumbprint = httpsPersisted.Thumbprint;
+    httpsSettings.SubjectName = httpsPersisted.SubjectName;
     httpsSettings.Protocols = httpsPersisted.Protocols;
-    httpsSettings.AllowInvalidCertificates = httpsPersisted.AllowInvalidCertificates;
 }
 builder.Services.AddSingleton(httpsSettings);
 builder.Services.AddSingleton<CertificateService>();
@@ -112,9 +112,10 @@ if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
     System.Security.Cryptography.X509Certificates.X509Certificate2? httpsCertificate = null;
     if (httpsSettings.Enabled)
     {
-        // Chain-validate the certificate against the AllowInvalidCertificates policy (spec §4.4):
-        // when invalid certs are NOT allowed, a self-signed/untrusted certificate (the browser's
-        // net::ERR_CERT_AUTHORITY_INVALID) is rejected and startup degrades to HTTP-only.
+        // Resolve the certificate once so a bad/locked PFX (e.g. memory-only password lost
+        // across restarts) degrades to a clear log + HTTP fallback instead of crashing startup
+        // (bootstrap-resilience precedent from Step 1). spec §4.2. Only loadability (private
+        // key present) is checked — browsers enforce trust/validity themselves.
         var (cert, certErrors) = certificateService.TryResolveValidatedCertificate(httpsSettings);
         if (certErrors.Count > 0)
         {
@@ -147,18 +148,6 @@ if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
                 });
                 listenOptions.Protocols = CertificateService.MapProtocols(httpsSettings.Protocols);
             });
-            // Companion plain-HTTP listener on the NEXT port (tunnel/edge compatibility):
-            // sandbox/tunnel proxies (e.g. *.e2b.app) terminate TLS at the edge and speak
-            // plain HTTP to the sandbox port; a TLS-only bind yields 502 from the proxy.
-            // Local direct access keeps the certified HTTPS port; tunnel traffic keeps
-            // working end-to-end. Off by default — enable with Https:AllowHttpTunnelPort.
-            if (httpsSettings.AllowHttpTunnelPort)
-            {
-                var tunnelPort = generalSettings.Port + 1;
-                options.Listen(System.Net.IPAddress.Any, tunnelPort);
-                Console.WriteLine($"HTTPS enabled: https://0.0.0.0:{generalSettings.Port} " +
-                                  $"(certified) + http://0.0.0.0:{tunnelPort} (tunnel/edge companion, Https:AllowHttpTunnelPort=true).");
-            }
         });
     }
     else
@@ -188,10 +177,8 @@ if (app.Environment.IsDevelopment())
 }
 
 // Redirect HTTP -> HTTPS only when HTTPS is enabled (spec §4.2); otherwise the middleware
-// would 500 on every request with no https port configured. Skipped when the companion
-// tunnel port is enabled: tunnel/edge traffic arrives as plain HTTP by design and must
-// NOT be redirected (the redirect would 502-loop at the edge proxy).
-if (httpsSettings.Enabled && !httpsSettings.AllowHttpTunnelPort)
+// would 500 on every request with no https port configured.
+if (httpsSettings.Enabled)
 {
     app.UseHttpsRedirection();
 }

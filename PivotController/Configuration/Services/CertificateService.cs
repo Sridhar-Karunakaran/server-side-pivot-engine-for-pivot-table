@@ -18,42 +18,6 @@ namespace PivotController.Configuration.Services
         }
 
         /// <summary>
-        /// Validates a loaded certificate for SERVER use (spec §4.4, corrected semantics):
-        /// the server must hold a private key, and — unless AllowInvalidCertificates=true —
-        /// the certificate must be within its validity period. Chain TRUST is intentionally
-        /// NOT enforced here: trust is validated by each CLIENT (browser / pivot table), and
-        /// a machine-local trust store cannot see the client's CA roots — enforcing it here
-        /// would reject perfectly valid certificates (e.g. missing intermediate in the
-        /// machine store) and serve HTTP instead of HTTPS. AllowInvalidCertificates=true is
-        /// the operator override for expired certificates.
-        /// </summary>
-        public List<string> ValidateCertificatePolicy(X509Certificate2 cert, bool allowInvalid)
-        {
-            var errors = new List<string>();
-            if (!cert.HasPrivateKey)
-            {
-                errors.Add("Certificate has no private key (cannot serve TLS).");
-                return errors;
-            }
-            var now = DateTime.Now;
-            if (cert.NotBefore > now)
-            {
-                errors.Add($"Certificate is not valid yet (NotBefore {cert.NotBefore:u}).");
-            }
-            if (cert.NotAfter < now)
-            {
-                if (allowInvalid)
-                {
-                    _logger.LogWarning("HTTPS certificate expired on {NotAfter}; serving anyway (AllowInvalidCertificates=true).", cert.NotAfter);
-                }
-                else
-                {
-                    errors.Add($"Certificate expired on {cert.NotAfter:u}. Set AllowInvalidCertificates=true to serve it anyway, or install a valid certificate.");
-                }
-            }
-            return errors;
-        }
-
         /// <summary>Validates settings without loading (for PUT-time checks). Empty list = valid.</summary>
         public List<string> Validate(HttpsSettings settings)
         {
@@ -168,31 +132,27 @@ namespace PivotController.Configuration.Services
         }
 
         /// <summary>
-        /// Resolves the certificate AND enforces the server-side policy (spec §4.4):
-        /// a private key is mandatory, and — unless AllowInvalidCertificates=true —
-        /// the certificate must be within its validity period (the flag is the operator
-        /// override for EXPIRED certificates). Chain trust is deliberately not checked
-        /// server-side (clients validate trust themselves; machine-local trust stores
-        /// cannot see the client's CA roots and would reject valid certificates).
+        /// Resolves the certificate and verifies it is usable to serve TLS (spec §4.4):
+        /// a private key is mandatory. Trust and validity are NOT enforced server-side —
+        /// browsers/clients block invalid or untrusted certificates themselves, so any
+        /// server-side check would only add false rejections.
         /// </summary>
         public X509Certificate2? ResolveValidatedCertificate(HttpsSettings settings)
         {
             var cert = ResolveCertificate(settings);
             if (cert is null) return null;
-            var policyErrors = ValidateCertificatePolicy(cert, settings.AllowInvalidCertificates);
-            if (policyErrors.Count > 0)
+            if (!cert.HasPrivateKey)
             {
                 throw new InvalidOperationException(
-                    "Configured HTTPS certificate cannot be used: " +
-                    string.Join(" ", policyErrors));
+                    "Configured HTTPS certificate has no private key (cannot serve TLS).");
             }
             return cert;
         }
 
         /// <summary>
-        /// Non-throwing variant for startup: returns (cert, errors). When the policy forbids
-        /// invalid certificates and the resolved certificate fails chain validation, cert is
-        /// null and errors explain why (caller logs + degrades to HTTP instead of crashing).
+        /// Non-throwing variant for startup: returns (cert, errors). When the certificate
+        /// cannot be loaded or has no private key, cert is null and errors explain why
+        /// (caller logs + degrades to HTTP instead of crashing).
         /// </summary>
         public (X509Certificate2? Certificate, List<string> Errors) TryResolveValidatedCertificate(HttpsSettings settings)
         {
