@@ -143,18 +143,14 @@ namespace PivotController.Controllers
         private async Task<EngineProperties> GetEngine(FetchData param, string indexName)
         {
             isRendered = false;
-            string engineKey = _indexManager.EngineCacheKey(indexName, param.Hash);
-#pragma warning disable CS8603 // Possible null reference return.
-            return await _cache.GetOrCreateAsync(engineKey,
-                async (cacheEntry) =>
-                {
-                    isRendered = true;
-                    cacheEntry.SetSize(1);
-                    cacheEntry.AbsoluteExpiration = DateTimeOffset.UtcNow.AddMinutes(60);
-                    PivotEngine.Data = await GetData(indexName).ConfigureAwait(false);
-                    return await PivotEngine.GetEngine(param).ConfigureAwait(false);
-                }).ConfigureAwait(false);
-#pragma warning restore CS8603
+            // Flexmonster semantics: at most CacheSizeLimit cached responses per index
+            // (LRU per index); 0 disables response caching entirely.
+            return await _indexManager.GetOrCreateEngineAsync(indexName, param.Hash, async () =>
+            {
+                isRendered = true;
+                PivotEngine.Data = await GetData(indexName).ConfigureAwait(false);
+                return await PivotEngine.GetEngine(param).ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
 
         private async Task<object> GetData(string indexName)

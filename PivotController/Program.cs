@@ -72,11 +72,10 @@ builder.Services.AddCors(options =>
         builder.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
     });
 });
-// Cache size limit from DataStorage:CacheSizeLimit (spec §2.3). 0 disables caching.
-builder.Services.AddMemoryCache((options) =>
-{
-    options.SizeLimit = dataStorageSettings.CacheSizeLimit == 0 ? null : dataStorageSettings.CacheSizeLimit;
-});
+// MemoryCache without a global size cap: CacheSizeLimit is enforced per index
+// (Flexmonster semantics — max cached server responses per index), not globally.
+// CacheSizeLimit == 0 disables response caching (handled in IndexManager).
+builder.Services.AddMemoryCache();
 
 var app = builder.Build();
 

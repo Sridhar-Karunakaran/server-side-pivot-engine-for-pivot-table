@@ -23,6 +23,12 @@ namespace PivotController.Indexing
         string DataCacheKey(string indexName);
         string EngineCacheKey(string indexName, string hash);
         void EvictEngineCache(string indexName);
+        /// <summary>
+        /// Cached server-response lookup with per-index LRU cap (Flexmonster semantics):
+        /// at most CacheSizeLimit engine responses are cached per index; 0 disables
+        /// response caching for all indexes.
+        /// </summary>
+        Task<T> GetOrCreateEngineAsync<T>(string indexName, string hash, Func<Task<T>> factory) where T : class;
         /// <summary>Cache observability: which indexes are cached vs evicted (spec §2.3 testing aid).</summary>
         CacheStatsResponse GetCacheStats();
         List<IndexFieldDescription> GetFieldMappings(string indexName);
@@ -43,6 +49,9 @@ namespace PivotController.Indexing
         private readonly ConcurrentDictionary<string, IndexStatusResponse> _statuses = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _engineLocks = new(StringComparer.OrdinalIgnoreCase);
+        // Per-index LRU tracking of cached engine responses (Flexmonster cacheSizeLimit semantics).
+        private readonly ConcurrentDictionary<string, LinkedList<string>> _engineLru = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, Dictionary<string, LinkedListNode<string>>> _engineLruIndex = new(StringComparer.OrdinalIgnoreCase);
 
         public IndexManager(IMemoryCache cache, IDataSourceProviderFactory providerFactory, IndexStore store,
             DataServerSettings settings, PivotController.Configuration.Models.DataStorageSettings dataStorage,
@@ -61,20 +70,89 @@ namespace PivotController.Indexing
 
         public void EvictEngineCache(string indexName)
         {
-            // MemoryCache does not support prefix enumeration without reflection; engine keys are
-            // tracked through the per-index engine cache wrapper below (see GetOrCreateEngineAsync
-            // in the pivot controller) plus explicit invalidation on reload.
+            // Evict all tracked engine responses for this index (used on reload/mapping change).
+            if (_engineLruIndex.TryRemove(indexName, out var nodes))
+            {
+                foreach (var key in nodes.Keys)
+                {
+                    _cache.Remove(key);
+                }
+            }
+            _engineLru.TryRemove(indexName, out _);
+        }
+
+        public async Task<T> GetOrCreateEngineAsync<T>(string indexName, string hash, Func<Task<T>> factory) where T : class
+        {
+            var key = EngineCacheKey(indexName, hash);
+            if (_cache.TryGetValue(key, out T cached))
+            {
+                TouchEngine(indexName, key);
+                return cached;
+            }
+            var value = await factory().ConfigureAwait(false);
+            if (_dataStorage.CacheSizeLimit > 0)
+            {
+                _cache.Set(key, value, new MemoryCacheEntryOptions
+                {
+                    AbsoluteExpiration = DateTimeOffset.UtcNow.AddMinutes(60)
+                });
+                TrackEngine(indexName, key, _dataStorage.CacheSizeLimit);
+            }
+            // CacheSizeLimit == 0: responses are not cached; every request rebuilds.
+            return value;
+        }
+
+        private void TrackEngine(string indexName, string key, int limit)
+        {
+            var list = _engineLru.GetOrAdd(indexName, _ => new LinkedList<string>());
+            var index = _engineLruIndex.GetOrAdd(indexName, _ => new Dictionary<string, LinkedListNode<string>>(StringComparer.OrdinalIgnoreCase));
+            lock (list)
+            {
+                if (index.TryGetValue(key, out var node))
+                {
+                    list.Remove(node);
+                    list.AddFirst(node);
+                    return;
+                }
+                var newNode = list.AddFirst(key);
+                index[key] = newNode;
+                while (list.Count > limit)
+                {
+                    var oldest = list.Last!.Value;
+                    list.RemoveLast();
+                    index.Remove(oldest);
+                    _cache.Remove(oldest);
+                }
+            }
+        }
+
+        private void TouchEngine(string indexName, string key)
+        {
+            if (!_engineLru.TryGetValue(indexName, out var list)) return;
+            if (!_engineLruIndex.TryGetValue(indexName, out var index)) return;
+            lock (list)
+            {
+                if (index.TryGetValue(key, out var node))
+                {
+                    list.Remove(node);
+                    list.AddFirst(node);
+                }
+            }
         }
 
         public CacheStatsResponse GetCacheStats()
         {
+            // Per-index response cache stats (Flexmonster semantics): count of cached
+            // engine responses per index against the configured CacheSizeLimit.
             var cached = new List<string>();
             var evicted = new List<string>();
             foreach (var definition in _indexes.Values)
             {
-                if (_cache.TryGetValue(DataCacheKey(definition.Index), out object? _))
+                var hasData = _cache.TryGetValue(DataCacheKey(definition.Index), out object? _);
+                var responseCount = _engineLruIndex.TryGetValue(definition.Index, out var nodes) ? nodes.Count : 0;
+                if (hasData || responseCount > 0)
                 {
-                    cached.Add(definition.Index);
+                    cached.Add($"{definition.Index} ({responseCount} responses)");
                 }
                 else
                 {
