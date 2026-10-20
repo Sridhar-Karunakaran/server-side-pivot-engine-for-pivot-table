@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Pivot Table — Data Server over HTTPS (Simple Tunnel Sample)</title>
+    <!-- Latest EJ2 packages -->
+    <link rel="stylesheet" href="https://cdn.syncfusion.com/ej2/29.1.33/material.css" />
+    <script src="https://cdn.syncfusion.com/ej2/29.1.33/dist/ej2.min.js" type="text/javascript"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 24px; background: #fafafa; }
+        h1 { font-size: 20px; font-weight: 600; }
+        .meta { font-size: 13px; color: #555; margin: 8px 0 16px 0; }
+        .container { height: 420px; }
+    </style>
+</head>
+<body>
+    <h1>Pivot Table — Data Server over HTTPS</h1>
+    <div class="meta" id="Meta">Connecting to the Data Server's certificate-secured endpoint…</div>
+    <div class="container">
+        <div id="PivotView" style="width: 100%;"></div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            // Same-origin HTTPS endpoint: this page is served BY the Data Server,
+            // so its own protocol/host point straight back at the certified API.
+            // No hard-coded host -> works through any tunnel/proxy unchanged.
+            var endpoint = window.location.protocol + '//' + window.location.host + '/api/pivot/post';
+            document.getElementById('Meta').innerHTML =
+                'Connected to: <code>' + endpoint + '</code> · ' +
+                (window.location.protocol === 'https:' ? 'TLS/certificate-secured' : 'plain HTTP');
+
+            // Per-request index routing: copy the ?index= query into the POST body
+            // (the Data Server routes each pivot request by the body field).
+            var index = /[?&]index=([^&]+)/.exec(window.location.search);
+            index = index ? decodeURIComponent(index[1]) : 'Sales-Json';
+
+            var realOpen = XMLHttpRequest.prototype.open;
+            var realSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (method, url) {
+                this._pivotIndex = String(url).indexOf('/api/pivot/post') > -1 ? index : null;
+                return realOpen.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function (body) {
+                if (this._pivotIndex && typeof body === 'string' && body.indexOf('dataSourceSettings') > -1) {
+                    try {
+                        var parsed = JSON.parse(body);
+                        if (parsed && parsed.dataSourceSettings) {
+                            parsed.index = this._pivotIndex;
+                            arguments[0] = JSON.stringify(parsed);
+                        }
+                    } catch (e) { /* not JSON; leave as-is */ }
+                }
+                return realSend.apply(this, arguments);
+            };
+
+            // PivotView in Server mode — all aggregation/filtering/sorting runs on the
+            // Data Server via the HTTPS endpoint above; only viewport data comes back.
+            var pivotGridObj = new ej.pivotview.PivotView({
+                dataSourceSettings: {
+                    url: endpoint,
+                    mode: 'Server',
+                    type: 'JSON',
+                    expandAll: false,
+                    rows: [{ name: 'Sector', caption: 'Sector' }],
+                    columns: [{ name: 'Year', caption: 'Year' }],
+                    values: [{ name: 'PowUnits', caption: 'Power Units' }],
+                    valueSortSettings: { headerId: 'PowUnits' }
+                },
+                enableVirtualization: true,
+                showGroupingBar: true,
+                showFieldList: true,
+                height: 420
+            });
+            pivotGridObj.appendTo('#PivotView');
+        })();
+    </script>
+</body>
+</html>

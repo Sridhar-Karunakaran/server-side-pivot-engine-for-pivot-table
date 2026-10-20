@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Pivot Table — Data Server over HTTPS (Certificate Tunnel Sample)</title>
+    <link rel="stylesheet" href="https://cdn.syncfusion.com/ej2/29.1.33/material.css" />
+    <script src="https://cdn.syncfusion.com/ej2/29.1.33/dist/ej2.min.js" type="text/javascript"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 24px; background: #fafafa; }
+        h1 { font-size: 22px; font-weight: 600; }
+        p.note { color: #555; max-width: 860px; }
+        .cert-banner { background: #e8f5e9; border: 1px solid #a5d6a7; border-radius: 8px;
+                       padding: 10px 14px; margin: 14px 0; font-size: 13px; color: #1b5e20; }
+        .pivot-section { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+                          padding: 14px; margin: 14px 0; }
+        .pivot-section h2 { font-size: 15px; margin: 0 0 10px 0; color: #333; }
+        .pivot-section .meta { font-size: 12px; color: #777; margin-bottom: 8px; }
+        .container { height: 400px; }
+        #TlsInfo { font-size: 12px; color: #555; margin: 8px 0 18px 0; }
+    </style>
+</head>
+<body>
+    <h1>Pivot Table — Data Server over HTTPS (Certificate-Secured)</h1>
+    <div class="cert-banner">
+        This page is served over TLS by the Data Server itself. Both grids run in <b>Server mode</b>
+        against <code>https://…/api/pivot/post</code>, so every pivot request — including the
+        certificate-secured handshake — is performed against the HTTPS endpoint configured in
+        <code>appsettings.json</code> (<code>Https:PfxPath</code> / <code>Https:PemCertPath</code>+<code>PemKeyPath</code>).
+    </div>
+
+    <div id="TlsInfo">Detecting TLS endpoint…</div>
+
+    <div class="pivot-section">
+        <h2>Sales Analysis — JSON index</h2>
+        <div class="meta">index: <code>Sales-Json</code> · source: sales-analysis.json</div>
+        <div class="container"><div id="PivotSalesJson" style="width: 100%;"></div></div>
+    </div>
+
+    <div class="pivot-section">
+        <h2>Product Sales — CSV index</h2>
+        <div class="meta">index: <code>Data-Csv</code> · source: data.csv</div>
+        <div class="container"><div id="PivotDataCsv" style="width: 100%;"></div></div>
+    </div>
+
+    <script type="text/javascript">
+        // Resolve the pivot endpoint from THIS page's origin, so the grid always talks to
+        // the same HTTPS host that served the page (page origin == Data Server origin here).
+        // The certificate securing the page is the one configured in appsettings.json.
+        var pivotUrl = window.location.protocol + '//' + window.location.host + '/api/pivot/post';
+
+        document.getElementById('TlsInfo').innerHTML =
+            'Pivot endpoint: <code>' + pivotUrl + '</code>' +
+            ' &mdash; protocol: <b>' + window.location.protocol.replace(':','') + '</b>' +
+            ' &mdash; requests use the server certificate from <code>appsettings.json</code> (PFX or PEM).';
+
+        // Per-request index routing: the ?index= query on each grid's URL is copied into the
+        // POST body (the Data Server routes per-request on the body field).
+        (function () {
+            function patchUrlIndex(url) {
+                var m = /[?&]index=([^&]+)/.exec(String(url));
+                return m ? decodeURIComponent(m[1]) : null;
+            }
+            function injectIndex(body, index) {
+                if (!index || typeof body !== 'string' || body.indexOf('dataSourceSettings') === -1) return body;
+                try {
+                    var parsed = JSON.parse(body);
+                    if (parsed && parsed.dataSourceSettings) {
+                        parsed.index = index;
+                        return JSON.stringify(parsed);
+                    }
+                } catch (e) { }
+                return body;
+            }
+            var realOpen = XMLHttpRequest.prototype.open;
+            var realSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (method, url) {
+                this._pivotIndex = String(url).indexOf('/api/pivot/post') > -1 ? patchUrlIndex(url) : null;
+                return realOpen.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function (body) {
+                if (this._pivotIndex && body) {
+                    arguments[0] = injectIndex(body, this._pivotIndex);
+                }
+                return realSend.apply(this, arguments);
+            };
+        })();
+
+        function createPivot(elementId, indexName) {
+            var pivot = new ej.pivotview.PivotView({
+                dataSourceSettings: {
+                    url: pivotUrl + '?index=' + encodeURIComponent(indexName),
+                    mode: 'Server',
+                    type: 'JSON',
+                    expandAll: false,
+                    enableSorting: true,
+                    rows: [{ name: indexName === 'Sales-Json' ? 'Sector' : 'Region', caption: indexName === 'Sales-Json' ? 'Sector' : 'Region' }],
+                    values: [{ name: indexName === 'Sales-Json' ? 'PowUnits' : 'Sold', caption: 'Units' }]
+                },
+                enableVirtualization: true,
+                enableValueSorting: true,
+                showGroupingBar: true,
+                showFieldList: true,
+                height: '100%',
+                width: '100%'
+            });
+            pivot.appendTo('#' + elementId);
+        }
+
+        window.addEventListener('load', function () {
+            createPivot('PivotSalesJson', 'Sales-Json');
+            createPivot('PivotDataCsv', 'Data-Csv');
+        });
+    </script>
+</body>
+</html>

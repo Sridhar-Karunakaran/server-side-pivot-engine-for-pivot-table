@@ -125,7 +125,7 @@ namespace PivotController.Configuration.Services
             if (!string.IsNullOrWhiteSpace(settings.PemCertPath) && !string.IsNullOrWhiteSpace(settings.PemKeyPath))
             {
                 var cert = LoadPemCertificate(settings.PemCertPath!, settings.PemKeyPath!);
-                _logger.LogInformation("HTTPS certificate loaded from PEM {Path} (Windows-compatible key).", settings.PemCertPath);
+                _logger.LogInformation("HTTPS certificate loaded from PEM {Path}.", settings.PemCertPath);
                 return cert;
             }
             bool storeByThumbprint = !string.IsNullOrWhiteSpace(settings.Thumbprint);
@@ -208,11 +208,10 @@ namespace PivotController.Configuration.Services
         }
 
         /// <summary>
-        /// Loads a PEM cert+key pair in a Windows-safe way. X509Certificate2.CreateFromPemFile
-        /// produces an EPHEMERAL key handle that works on Linux but breaks TLS on Windows
-        /// (Kestrel handshake failure — client sees connection reset on the first request).
-        /// Round-tripping through an in-memory PFX gives the key a normal, persistable
-        /// representation so the pair behaves identically on both platforms.
+        /// Loads a PEM cert+key pair with clear diagnostics for the common failures
+        /// (paths swapped, encrypted key, mismatched pair). The key is kept exactly as
+        /// CreateFromPemFile produces it — no export/round-trip, so no behavior change
+        /// versus PFX on any platform. Private key presence is verified.
         /// </summary>
         private X509Certificate2 LoadPemCertificate(string certPath, string keyPath)
         {
@@ -225,22 +224,15 @@ namespace PivotController.Configuration.Services
             {
                 throw new InvalidOperationException(
                     $"Failed to read PEM certificate '{certPath}' / key '{keyPath}'. " +
-                    "Check that PemCertPath points to the certificate (BEGIN CERTIFICATE) and " +
-                    "PemKeyPath to the private key (BEGIN PRIVATE KEY / BEGIN RSA PRIVATE KEY), " +
-                    "and that the key is unencrypted (no passphrase). " + ex.Message, ex);
+                    "Check that PemCertPath points at the certificate (BEGIN CERTIFICATE) and " +
+                    "PemKeyPath at the private key (BEGIN PRIVATE KEY / BEGIN RSA PRIVATE KEY), " +
+                    $"and that the key matches the certificate. ({ex.Message})", ex);
             }
             if (!combined.HasPrivateKey)
             {
                 throw new InvalidOperationException(
-                    $"PEM certificate '{certPath}' loaded without a private key. " +
-                    "Ensure PemKeyPath points to the private key file matching the certificate.");
-            }
-            if (OperatingSystem.IsWindows())
-            {
-                // In-memory PFX round-trip: normalizes the ephemeral PEM key into a
-                // Windows CNG/persistable key so Kestrel can use it for TLS.
-                var pfxBytes = combined.Export(X509ContentType.Pfx);
-                return new X509Certificate2(pfxBytes, (string?)null, X509KeyStorageFlags.MachineKeySet);
+                    $"PEM certificate '{certPath}' loaded without a private key; " +
+                    "verify PemKeyPath points at the matching private key file.");
             }
             return combined;
         }
