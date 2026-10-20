@@ -106,18 +106,32 @@ builder.Services.AddMemoryCache();
 // over the `urls` key; only an explicit ASPNETCORE_URLS environment variable overrides it.
 if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
 {
+    // Pre-resolve the certificate once so a bad/locked PFX (e.g. memory-only password lost
+    // across restarts) degrades to a clear log + HTTP fallback instead of crashing startup
+    // (bootstrap-resilience precedent from Step 1). spec §4.2.
+    System.Security.Cryptography.X509Certificates.X509Certificate2? httpsCertificate = null;
     if (httpsSettings.Enabled)
     {
+        try
+        {
+            httpsCertificate = certificateService.ResolveCertificate(httpsSettings);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine("HTTPS certificate could not be loaded; starting HTTP-only. " + ex.Message);
+            Console.Error.WriteLine("Fix Https settings (appsettings.json Https:* or PUT /api/config/https) and restart.");
+            httpsSettings.Enabled = false;
+        }
+    }
+    if (httpsSettings.Enabled && httpsCertificate is not null)
+    {
         // HTTPS listener (spec §4.2): resolved certificate, protocol selection (§4.3),
-        // TLS 1.2+ enforced. The certificate resolves lazily inside the callback so the
-        // store lookup / PFX load runs against the final (persisted) settings.
+        // TLS 1.2+ enforced, fixed for the process lifetime (spec §4.2.4).
         builder.WebHost.ConfigureKestrel(options =>
         {
             options.Listen(System.Net.IPAddress.Any, generalSettings.Port, listenOptions =>
             {
-                var cert = certificateService.ResolveCertificate(httpsSettings)
-                    ?? throw new InvalidOperationException("HTTPS enabled but no certificate source configured.");
-                listenOptions.UseHttps(cert, httpsOptions =>
+                listenOptions.UseHttps(httpsCertificate, httpsOptions =>
                 {
                     // TLS 1.2+ enforced: disable legacy protocol versions (spec §4.2).
                     httpsOptions.SslProtocols =

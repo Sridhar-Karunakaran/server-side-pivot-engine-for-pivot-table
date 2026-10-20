@@ -39,8 +39,15 @@ namespace PivotController.Configuration.Controllers
             {
                 enabled = e.GetBoolean();
             }
+            // Explicit null in the body clears the corresponding setting (merge-patch
+            // semantics: null means "remove", omission means "leave unchanged").
             string? Str(string name) =>
-                body.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+                body.TryGetProperty(name, out var v)
+                    ? v.ValueKind == JsonValueKind.String
+                        ? v.GetString()
+                        : v.ValueKind == JsonValueKind.Null ? "\u0000null:" : null
+                    : null;
+            string? Deref(string? s) => s == "\u0000null:" ? "" : s;
             string? pfxPath = Str("pfxPath");
             string? pfxPassword = Str("pfxPassword");
             string? pemCertPath = Str("pemCertPath");
@@ -77,8 +84,8 @@ namespace PivotController.Configuration.Controllers
             {
                 return UnprocessableEntity(new { error = "Body contained no recognized HTTPS settings." });
             }
-            var (settings, requiresRestart, errors) = _https.ApplyPatch(enabled, pfxPath, pfxPassword,
-                pemCertPath, pemKeyPath, storeLocation, storeName, thumbprint, protocols,
+            var (settings, requiresRestart, errors) = _https.ApplyPatch(enabled, Deref(pfxPath), Deref(pfxPassword),
+                Deref(pemCertPath), Deref(pemKeyPath), storeLocation, Deref(storeName), Deref(thumbprint), protocols,
                 allowInvalidCertificates, _environment.IsProduction());
             if (errors.Count > 0)
             {
