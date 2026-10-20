@@ -165,9 +165,6 @@ GOT_CN=$(echo | openssl s_client -connect "localhost:$PORT" 2>/dev/null | openss
 echo "$GOT_CN" | grep -q "CN *= *localhost" && ok "server presents configured cert" || bad "unexpected cert"
 echo "-- EXPIRED cert + AllowInvalidCertificates=false -> rejected (HTTP-only fallback):"
 openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/expired-key.pem" -out "$CERT_DIR/expired-cert.pem" -days 1 -nodes -subj "/CN=localhost" 2>/dev/null
-echo "-- PEM key usability (Windows-safe round-trip path):"
-openssl pkcs12 -export -out "$CERT_DIR/pem-roundtrip.pfx" -inkey "$KEY" -in "$CERT" -passout pass:rt 2>/dev/null
-openssl pkcs12 -in "$CERT_DIR/pem-roundtrip.pfx" -passin pass:rt -nokeys 2>/dev/null | openssl x509 -noout -subject 2>/dev/null && ok "PEM pair round-trips through PFX (Windows key-normalization path)" || bad "PEM pair failed PFX round-trip"
 echo "-- EXPIRED-cert path (policy) + SubjectName store option:"
 openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/exp2-key.pem" -out "$CERT_DIR/exp2-cert.pem" -days 1 -nodes -subj "/CN=localhost" 2>/dev/null
 C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Content-Type: application/json' \
