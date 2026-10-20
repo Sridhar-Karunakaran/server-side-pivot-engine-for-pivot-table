@@ -124,7 +124,7 @@ namespace PivotController.Configuration.Services
             }
             if (!string.IsNullOrWhiteSpace(settings.PemCertPath) && !string.IsNullOrWhiteSpace(settings.PemKeyPath))
             {
-                var cert = X509Certificate2.CreateFromPemFile(settings.PemCertPath, settings.PemKeyPath);
+                var cert = LoadPemCertificate(settings.PemCertPath!, settings.PemKeyPath!);
                 _logger.LogInformation("HTTPS certificate loaded from PEM {Path}.", settings.PemCertPath);
                 return cert;
             }
@@ -205,6 +205,36 @@ namespace PivotController.Configuration.Services
             {
                 return (null, new List<string> { ex.Message });
             }
+        }
+
+        /// <summary>
+        /// Loads a PEM cert+key pair with clear diagnostics for the common failures
+        /// (paths swapped, encrypted key, mismatched pair). The key is kept exactly as
+        /// CreateFromPemFile produces it — no export/round-trip, so no behavior change
+        /// versus PFX on any platform. Private key presence is verified.
+        /// </summary>
+        private X509Certificate2 LoadPemCertificate(string certPath, string keyPath)
+        {
+            X509Certificate2 combined;
+            try
+            {
+                combined = X509Certificate2.CreateFromPemFile(certPath, keyPath);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to read PEM certificate '{certPath}' / key '{keyPath}'. " +
+                    "Check that PemCertPath points at the certificate (BEGIN CERTIFICATE) and " +
+                    "PemKeyPath at the private key (BEGIN PRIVATE KEY / BEGIN RSA PRIVATE KEY), " +
+                    $"and that the key matches the certificate. ({ex.Message})", ex);
+            }
+            if (!combined.HasPrivateKey)
+            {
+                throw new InvalidOperationException(
+                    $"PEM certificate '{certPath}' loaded without a private key; " +
+                    "verify PemKeyPath points at the matching private key file.");
+            }
+            return combined;
         }
 
         /// <summary>Maps Protocols option onto Kestrel's HttpProtocols enum.</summary>
