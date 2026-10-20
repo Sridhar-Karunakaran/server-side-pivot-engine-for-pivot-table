@@ -234,6 +234,34 @@ namespace PivotController.Configuration.Services
                     $"PEM certificate '{certPath}' loaded without a private key; " +
                     "verify PemKeyPath points at the matching private key file.");
             }
+            if (!OperatingSystem.IsWindows())
+            {
+                return combined; // Linux/macOS: Kestrel uses the PEM key directly — nothing further needed.
+            }
+            // Windows-only normalization (does NOT affect PFX or Windows-store sources):
+            // CreateFromPemFile yields an EPHEMERAL key handle. Kestrel's SChannel cannot use
+            // an ephemeral handle for the TLS handshake — the browser's connection to
+            // https://localhost:<port> is closed before any HTTP response (ERR_CONNECTION_CLOSED /
+            // "closed before it receives an HTTP response"). Round-tripping through an IN-MEMORY
+            // PFX re-imports the key as a normal CNG key that SChannel can use.
+            // Default key flags (no MachineKeySet): no elevation required.
+            // If the round-trip fails for any reason, fall back to the ORIGINAL combined
+            // certificate — never fail a load that would otherwise succeed.
+            try
+            {
+                var pfxBytes = combined.Export(X509ContentType.Pfx);
+                var normalized = new X509Certificate2(pfxBytes, (string?)null);
+                if (normalized.HasPrivateKey)
+                {
+                    _logger.LogInformation(
+                        "PEM key normalized for Windows (in-memory PFX round-trip; ephemeral key handles cannot serve TLS on Windows).");
+                    return normalized;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "PEM in-memory PFX normalization failed; using the original PEM certificate.");
+            }
             return combined;
         }
 
