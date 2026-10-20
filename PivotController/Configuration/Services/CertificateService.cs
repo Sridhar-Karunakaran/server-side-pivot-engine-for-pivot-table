@@ -103,14 +103,17 @@ namespace PivotController.Configuration.Services
                 var storeLocation = settings.StoreLocation == CertificateStoreLocationOption.LocalMachine
                     ? System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine
                     : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
-                using var store = new X509Store(settings.StoreName, storeLocation);
+                // Explicit null in appsettings.json (e.g. "StoreName": null) must NOT clobber
+                // the default — X509Store(null) throws and startup degrades to HTTP-only.
+                var storeName = string.IsNullOrWhiteSpace(settings.StoreName) ? "My" : settings.StoreName;
+                using var store = new X509Store(storeName, storeLocation);
                 store.Open(OpenFlags.ReadOnly);
                 var findType = storeByThumbprint ? X509FindType.FindByThumbprint : X509FindType.FindBySubjectName;
                 var findValue = storeByThumbprint ? settings.Thumbprint! : settings.SubjectName!;
                 var found = store.Certificates.Find(findType, findValue, validOnly: false);
                 if (found.Count == 0)
                 {
-                    throw new InvalidOperationException($"Certificate with {(storeByThumbprint ? $"thumbprint '{settings.Thumbprint}'" : $"subject name '{settings.SubjectName}'")} not found in store {storeLocation}/{settings.StoreName}.");
+                    throw new InvalidOperationException($"Certificate with {(storeByThumbprint ? $"thumbprint '{settings.Thumbprint}'" : $"subject name '{settings.SubjectName}'")} not found in store {storeLocation}/{storeName}.");
                 }
                 // Pick the first entry that actually has a usable private key (subject-name
                 // lookups can match multiple certificates; thumbprint matches cannot).
@@ -122,10 +125,10 @@ namespace PivotController.Configuration.Services
                 if (candidate is null)
                 {
                     throw new InvalidOperationException(
-                        $"Certificate '{(storeByThumbprint ? settings.Thumbprint : settings.SubjectName)}' in store {storeLocation}/{settings.StoreName} has no private key and cannot serve TLS. " +
+                        $"Certificate '{(storeByThumbprint ? settings.Thumbprint : settings.SubjectName)}' in store {storeLocation}/{storeName} has no private key and cannot serve TLS. " +
                         "Import the certificate with its private key (and mark it exportable if needed).");
                 }
-                _logger.LogInformation("HTTPS certificate loaded from Windows store {Location}/{Store} by {Lookup}.", storeLocation, settings.StoreName, storeByThumbprint ? "thumbprint" : "subject name");
+                _logger.LogInformation("HTTPS certificate loaded from Windows store {Location}/{Store} by {Lookup}.", storeLocation, storeName, storeByThumbprint ? "thumbprint" : "subject name");
                 return candidate;
             }
             throw new InvalidOperationException("HTTPS enabled but no certificate source configured.");
