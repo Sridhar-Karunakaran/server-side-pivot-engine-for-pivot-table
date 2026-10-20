@@ -61,9 +61,23 @@ namespace PivotController.Configuration.Services
             }
             if (!string.IsNullOrWhiteSpace(settings.PfxPath))
             {
-                var cert = string.IsNullOrEmpty(settings.PfxPassword)
-                    ? new X509Certificate2(settings.PfxPath)
-                    : new X509Certificate2(settings.PfxPath, settings.PfxPassword);
+                // PFX password is memory-only (never persisted, spec §4.5.1): after a restart
+                // the password comes from appsettings.json; a persisted-PFX PUT without it
+                // must not crash startup — fall back to appsettings' PfxPassword (may be null).
+                X509Certificate2? cert = null;
+                try
+                {
+                    cert = string.IsNullOrEmpty(settings.PfxPassword)
+                        ? new X509Certificate2(settings.PfxPath)
+                        : new X509Certificate2(settings.PfxPath, settings.PfxPassword);
+                }
+                catch (System.Security.Cryptography.CryptographicException ex)
+                {
+                    _logger.LogError(ex, "PFX '{Path}' could not be read with the provided password (password is memory-only and does not survive restarts).", settings.PfxPath);
+                    throw new InvalidOperationException(
+                        $"PFX certificate '{settings.PfxPath}' requires a password that is not available in this process. " +
+                        "PFX passwords are never persisted; set the password in appsettings.json (Https:PfxPassword) or re-supply it via PUT /api/config/https and keep the process running.", ex);
+                }
                 _logger.LogInformation("HTTPS certificate loaded from PFX {Path}.", settings.PfxPath);
                 return cert;
             }

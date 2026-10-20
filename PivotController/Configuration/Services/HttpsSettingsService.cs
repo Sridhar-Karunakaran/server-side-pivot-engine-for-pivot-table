@@ -55,14 +55,16 @@ namespace PivotController.Configuration.Services
         {
             lock (_sync)
             {
+                static string? Normalize(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
                 var candidate = _settings.Sanitized();
                 if (enabled.HasValue) candidate.Enabled = enabled.Value;
-                if (pfxPath != null) candidate.PfxPath = pfxPath;
-                if (pemCertPath != null) candidate.PemCertPath = pemCertPath;
-                if (pemKeyPath != null) candidate.PemKeyPath = pemKeyPath;
+                // Explicit null in the patch clears the setting (empty string after Deref).
+                candidate.PfxPath = pfxPath == null ? candidate.PfxPath : Normalize(pfxPath);
+                candidate.PemCertPath = pemCertPath == null ? candidate.PemCertPath : Normalize(pemCertPath);
+                candidate.PemKeyPath = pemKeyPath == null ? candidate.PemKeyPath : Normalize(pemKeyPath);
                 if (storeLocation.HasValue) candidate.StoreLocation = storeLocation.Value;
                 if (storeName != null) candidate.StoreName = storeName;
-                if (thumbprint != null) candidate.Thumbprint = thumbprint;
+                candidate.Thumbprint = thumbprint == null ? candidate.Thumbprint : Normalize(thumbprint);
                 if (protocols.HasValue) candidate.Protocols = protocols.Value;
                 if (allowInvalidCertificates.HasValue) candidate.AllowInvalidCertificates = allowInvalidCertificates.Value;
 
@@ -87,7 +89,7 @@ namespace PivotController.Configuration.Services
                 _settings.Thumbprint = candidate.Thumbprint;
                 _settings.Protocols = candidate.Protocols;
                 _settings.AllowInvalidCertificates = candidate.AllowInvalidCertificates;
-                if (pfxPassword != null) _settings.PfxPassword = pfxPassword;
+                _settings.PfxPassword = pfxPassword != null ? Normalize(pfxPassword) : _settings.PfxPassword;
 
                 _store.Save(SettingsFilePath, _settings.Sanitized());
                 if (_settings.Enabled)
