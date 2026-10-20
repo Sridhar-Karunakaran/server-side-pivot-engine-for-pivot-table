@@ -4,7 +4,7 @@
 
 **Version:** 2.2
 
-**Implementation Order:** Index Configuration (Step 1) → General Settings → Data Storage Settings → Database Query Settings → HTTPS Settings → Security Settings → Report Sharing Settings → Client-Side Integration (Step 8 - Final)
+**Implementation Order (reordered 2026-10):** Index Configuration (Step 1) → General Settings → Data Storage Settings → **HTTPS Settings (Step 4)** → Security Settings (Step 5) → Report Sharing Settings (Step 6) → Client-Side Integration (Step 7) → **Database Query Settings (Step 8 - FINAL)** — deferred to last because it requires DB provider support installed on the machine; no other step depends on it.
 
 ---
 
@@ -15,9 +15,18 @@
 | 1 | §0 Index Configuration | ✅ Implemented & verified | All scenarios verified live; see deltas below |
 | 2 | §1 General Settings | ✅ Implemented & verified | All scenarios verified live; see deltas below |
 | 3 | §2 Data Storage Settings | ✅ Implemented & verified | CacheSizeLimit aligned with Flexmonster semantics; see deltas below |
-| 4–8 | §3–§7 | ⬜ Not started | Database query, HTTPS, security, report sharing, client-side integration |
+| 4 | §4 HTTPS Settings | ✅ Implemented & verified | Verified live with self-signed PEM cert: TLS 1.2+ enforced (TLS 1.1 refused), HTTP/1 & HTTP/2 negotiation, GET/PUT /api/config/https merge-patch, https.json persistence (password never persisted), 422 validation, requiresRestart semantics; see deltas below |
+| 5–7 | §5–§7 | ⬜ Not started | Security, report sharing, client-side integration |
+| 8 | §3 Database Query | ⬜ Deferred to final | REORDERED to Step 8 — requires DB provider support installed on the machine |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
+
+**Step 4 — HTTPS Settings**
+- `https.json` (in `{DataFolder}`) is the persisted source of truth written by `PUT /api/config/https`; at startup it overrides appsettings.json `Https:*` values (password is never persisted; PFX password is memory-only via API).
+- `PfxPassword` is accepted by `PUT` but never returned by `GET` nor written to disk.
+- Certificate sources are mutually exclusive — `422` when more than one is configured (PFX / PEM pair / Windows store thumbprint). Store lookup is Windows-only and rejected with 422 elsewhere (spec §4.1).
+- Kestrel binds `https://0.0.0.0:{General:Port}` when `Https:Enabled`; `SslProtocols = Tls12 | Tls13` (TLS 1.2+ enforced — TLS 1.1 handshake refused, verified live). `UseHttpsRedirection` is applied only when HTTPS is enabled (would otherwise 500 with no https port).
+- `requiresRestart: true` for all HTTPS changes (listener binds at startup); invalid settings fail startup fast with a clear message.
 
 **Step 1 — Index Configuration**
 - `CsvDelimiter`/`CsvDecimalSeparator`/`CsvThousandsSeparator` are **enums** (§0.6): `CsvThousandsSeparator ∈ {Comma, Dot, Space}`, `CsvDecimalSeparator ∈ {Comma, Dot}`. Both enum names (`"Dot"`) and raw symbols (`"."`, `","`, `" "`) are accepted in appsettings.json (TypeConverter), API bodies (System.Text.Json converter), and `indexes.json` (Newtonsoft).
@@ -720,11 +729,12 @@ public class DatabaseQuerySettings
 
 **Scenario 3.3.2: Update Database Query Settings**
 - When: `PUT /api/config/databasequery { commandTimeoutEnabled: true, commandTimeLimit: 60 }`
+- Then: Returns 200 with updatue, commandTimeLimit: 60 }`
 - Then: Returns 200 with updated settings
 
 ---
 
-## 4. HTTPS Settings Configuration (STEP 5)
+## 4. HTTPS Settings Configuration (STEP 4; REORDERED — IMPLEMENTED & VERIFIED)
 
 ### 4.1 Configuration Model
 
@@ -1179,6 +1189,11 @@ public async Task<object> Post([FromBody] object args)
 2. Test with multiple indexes
 3. Test fallback to DefaultIndexId
 4. Verify backward compatibility
+
+---
+
+**END OF SPECIFICATION**
+rify backward compatibility
 
 ---
 
