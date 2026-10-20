@@ -14,7 +14,7 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="7.0.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.4.0" />
-    <PackageReference Include="Syncfusion.Pivot.Engine" Version="32.1.19" />
+    <PackageReference Include="Syncfusion.Pivot.Engine" Version="35.1.41" />
   </ItemGroup>
 
 </Project>

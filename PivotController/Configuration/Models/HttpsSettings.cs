@@ -22,6 +22,12 @@ namespace PivotController.Configuration.Models
         public string? SubjectName { get; set; }
         public HttpProtocolsOption Protocols { get; set; } = HttpProtocolsOption.HTTP1_AND_HTTP2;
         public bool AllowInvalidCertificates { get; set; } = false;
+        /// <summary>
+        /// Bind a companion plain-HTTP listener on General:Port+1 when HTTPS is enabled —
+        /// for tunnels/edge proxies (e.g. *.e2b.app) that terminate TLS at the edge and
+        /// speak plain HTTP to the sandbox port. Default false (HTTPS-only, spec §4.2).
+        /// </summary>
+        public bool AllowHttpTunnelPort { get; set; } = false;
 
         /// <summary>Certificate source count configured (PFX, PEM, or Windows store).</summary>
         public int ConfiguredSourceCount =>
@@ -44,7 +50,8 @@ namespace PivotController.Configuration.Models
             Thumbprint = Thumbprint,
             SubjectName = SubjectName,
             Protocols = Protocols,
-            AllowInvalidCertificates = AllowInvalidCertificates
+            AllowInvalidCertificates = AllowInvalidCertificates,
+            AllowHttpTunnelPort = AllowHttpTunnelPort
         };
     }
 }
