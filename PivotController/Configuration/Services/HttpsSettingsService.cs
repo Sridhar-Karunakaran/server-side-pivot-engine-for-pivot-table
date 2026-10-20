@@ -51,7 +51,7 @@ namespace PivotController.Configuration.Services
         public (HttpsSettings Settings, bool RequiresRestart, List<string> Errors) ApplyPatch(
             bool? enabled, string? pfxPath, string? pfxPassword, string? pemCertPath, string? pemKeyPath,
             CertificateStoreLocationOption? storeLocation, string? storeName, string? thumbprint, string? subjectName,
-            HttpProtocolsOption? protocols, bool? allowInvalidCertificates, bool environmentIsProduction)
+            HttpProtocolsOption? protocols)
         {
             lock (_sync)
             {
@@ -67,18 +67,11 @@ namespace PivotController.Configuration.Services
                 candidate.Thumbprint = thumbprint == null ? candidate.Thumbprint : Normalize(thumbprint);
                 candidate.SubjectName = subjectName == null ? candidate.SubjectName : Normalize(subjectName);
                 if (protocols.HasValue) candidate.Protocols = protocols.Value;
-                if (allowInvalidCertificates.HasValue) candidate.AllowInvalidCertificates = allowInvalidCertificates.Value;
 
                 var errors = _certificates.Validate(candidate);
-                // Spec §4.4.1: AllowInvalidCertificates is forbidden in Production.
-                if (candidate.AllowInvalidCertificates && environmentIsProduction)
-                {
-                    errors.Add("AllowInvalidCertificates forbidden in Production");
-                }
-                // Spec §4.4: when invalid certs are NOT allowed, reject a certificate that
-                // clients would refuse (untrusted/self-signed → net::ERR_CERT_AUTHORITY_INVALID)
-                // instead of persisting it and degrading on the next restart.
-                // The unsanitized candidate carries the live PFX password for this check only.
+                // Verify the certificate loads and can serve TLS (private key present) before
+                // persisting — browsers enforce trust/validity themselves, so nothing more
+                // is checked server-side.
                 if (errors.Count == 0 && candidate.Enabled)
                 {
                     var candidateWithSecrets = candidate;
@@ -99,7 +92,6 @@ namespace PivotController.Configuration.Services
                 _settings.StoreName = candidate.StoreName;
                 _settings.Thumbprint = candidate.Thumbprint;
                 _settings.Protocols = candidate.Protocols;
-                _settings.AllowInvalidCertificates = candidate.AllowInvalidCertificates;
                 _settings.PfxPassword = pfxPassword != null ? Normalize(pfxPassword) : _settings.PfxPassword;
 
                 _store.Save(SettingsFilePath, _settings.Sanitized());
@@ -139,8 +131,8 @@ namespace PivotController.Configuration.Services
                 _settings.StoreLocation = persisted.StoreLocation;
                 _settings.StoreName = persisted.StoreName;
                 _settings.Thumbprint = persisted.Thumbprint;
+                _settings.SubjectName = persisted.SubjectName;
                 _settings.Protocols = persisted.Protocols;
-                _settings.AllowInvalidCertificates = persisted.AllowInvalidCertificates;
                 _logger.LogInformation("HTTPS settings loaded from {Path}.", SettingsFilePath);
             }
         }

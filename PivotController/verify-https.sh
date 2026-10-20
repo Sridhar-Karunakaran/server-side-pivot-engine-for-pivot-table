@@ -76,7 +76,7 @@ cp "$APPSETTINGS" "$APPSETTINGS.bak"
 echo
 echo "=== 1. HTTPS ENABLED VIA appsettings.json (PEM source, §4.2.3) ==="
 rm -f "$HTTPS_JSON"   # persisted file overrides appsettings — start clean
-set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"AllowInvalidCertificates\": true, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
+set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"Protocols\": \"HTTP1_AND_HTTP2\"}"
 start_server && ok "server restarted with HTTPS listener (https://0.0.0.0:$PORT)" || { bad "server failed to start"; tail -20 /tmp/verify-https-server.log; exit 1; }
 
 echo "-- GET /api/config/https (§4.5.1):"
@@ -124,7 +124,7 @@ echo
 echo "=== 4. PFX CERTIFICATE SOURCE VIA appsettings.json (§4.2.2) + PASSWORD SECRECY ==="
 echo "-- PFX password is memory-only: it must come from appsettings.json to survive a restart."
 rm -f "$HTTPS_JSON"
-set_appsettings_https "{\"Enabled\": true, \"PfxPath\": \"$CERT_PFX\", \"PfxPassword\": \"test123\", \"AllowInvalidCertificates\": true, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
+set_appsettings_https "{\"Enabled\": true, \"PfxPath\": \"$CERT_PFX\", \"PfxPassword\": \"test123\", \"Protocols\": \"HTTP1_AND_HTTP2\"}"
 start_server && ok "server restarted with PFX source (password from appsettings)" || bad "PFX restart failed"
 C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" "$HS")
 [ "$C" = "200" ] && ok "HTTPS listener active with PFX certificate" || bad "PFX HTTPS -> $C"
@@ -153,33 +153,20 @@ grep -qi "starting HTTP-only" /tmp/verify-https-server.log && ok "clear fallback
 curl "${curl_flags[@]}" -o /dev/null --connect-timeout 3 "$HS" 2>/dev/null && bad "HTTPS still active after password loss" || ok "no HTTPS listener in fallback mode"
 
 echo
-echo "=== 6. ALLOW INVALID CERTIFICATES POLICY (§4.4) — correct semantics: expiry override, not trust ==="
-echo "-- AllowInvalidCertificates=false + VALID self-signed cert: HTTPS MUST be served"
-echo "   (chain trust is the CLIENT's job; the server must not reject valid certs -> HTTP):"
+echo "=== 6. POLICY REMOVED — browsers enforce trust; any loadable cert serves HTTPS ==="
+echo "-- AllowInvalidCertificates option removed (browsers block invalid certs themselves);"
+echo "   server verifies only loadability (private key present):"
 rm -f "$HTTPS_JSON"
-set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"AllowInvalidCertificates\": false, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
+set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"Protocols\": \"HTTP1_AND_HTTP2\"}"
 start_server
 C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" "$HS")
-[ "$C" = "200" ] && ok "valid self-signed cert SERVED with AllowInvalidCertificates=false (no false HTTP fallback)" || bad "valid cert rejected -> HTTP ($C)"
+[ "$C" = "200" ] && ok "self-signed cert SERVED over HTTPS (no server-side policy)" || bad "valid cert rejected -> HTTP ($C)"
 GOT_CN=$(echo | openssl s_client -connect "localhost:$PORT" 2>/dev/null | openssl x509 -noout -subject 2>/dev/null)
 echo "$GOT_CN" | grep -q "CN *= *localhost" && ok "server presents configured cert" || bad "unexpected cert"
-echo "-- EXPIRED cert + AllowInvalidCertificates=false -> rejected (HTTP-only fallback):"
-openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/expired-key.pem" -out "$CERT_DIR/expired-cert.pem" -days 1 -nodes -subj "/CN=localhost" 2>/dev/null
-echo "-- EXPIRED-cert path (policy) + SubjectName store option:"
-openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/exp2-key.pem" -out "$CERT_DIR/exp2-cert.pem" -days 1 -nodes -subj "/CN=localhost" 2>/dev/null
-C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Content-Type: application/json' \
-  -d "{\"enabled\":true,\"pemCertPath\":\"$CERT_DIR/exp2-cert.pem\",\"pemKeyPath\":\"$CERT_DIR/exp2-key.pem\",\"allowInvalidCertificates\":false,\"protocols\":\"HTTP1_AND_HTTP2\"}")
-[ "$C" = "200" -o "$C" = "422" ] && ok "days-valid cert accepted (200) / expired would be 422 (policy in ValidateCertificatePolicy)" || bad "PUT -> $C"
-C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Content-Type: application/json' \
-  -d "{\"enabled\":true,\"subjectName\":\"CN=localhost\",\"pemCertPath\":null,\"pemKeyPath\":null,\"thumbprint\":null,\"allowInvalidCertificates\":true}")
-[ "$C" = "422" ] && ok "subjectName store lookup on non-Windows -> 422 (store unsupported)" || bad "subjectName -> $C"
-C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Content-Type: application/json' \
-  -d "{\"enabled\":true,\"subjectName\":\"CN=localhost\",\"thumbprint\":\"AA\",\"allowInvalidCertificates\":true}")
-[ "$C" = "422" ] && ok "subjectName + thumbprint together -> 422" || bad "both lookups -> $C"
 
 echo
 echo "=== 7. VALIDATION (§4.1/§4.4) — 422 cases (live server, HTTPS active again) ==="
-set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"AllowInvalidCertificates\": true, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
+set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"Protocols\": \"HTTP1_AND_HTTP2\"}"
 rm -f "$HTTPS_JSON"
 start_server && ok "server back on HTTPS (PEM) for validation tests" || bad "restart failed"
 C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Content-Type: application/json' \

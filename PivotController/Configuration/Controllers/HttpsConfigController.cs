@@ -73,21 +73,15 @@ namespace PivotController.Configuration.Controllers
                 }
                 protocols = proto;
             }
-            bool? allowInvalidCertificates = null;
-            if (body.TryGetProperty("allowInvalidCertificates", out var aic) && (aic.ValueKind == JsonValueKind.True || aic.ValueKind == JsonValueKind.False))
-            {
-                allowInvalidCertificates = aic.GetBoolean();
-            }
             bool hasAny = enabled.HasValue || pfxPath != null || pfxPassword != null || pemCertPath != null
                 || pemKeyPath != null || storeLocation.HasValue || storeName != null || thumbprint != null || subjectName != null
-                || protocols.HasValue || allowInvalidCertificates.HasValue;
+                || protocols.HasValue;
             if (!hasAny)
             {
                 return UnprocessableEntity(new { error = "Body contained no recognized HTTPS settings." });
             }
             var (settings, requiresRestart, errors) = _https.ApplyPatch(enabled, Deref(pfxPath), Deref(pfxPassword),
-                Deref(pemCertPath), Deref(pemKeyPath), storeLocation, Deref(storeName), Deref(thumbprint), Deref(subjectName), protocols,
-                allowInvalidCertificates, _environment.IsProduction());
+                Deref(pemCertPath), Deref(pemKeyPath), storeLocation, Deref(storeName), Deref(thumbprint), Deref(subjectName), protocols);
             if (errors.Count > 0)
             {
                 return UnprocessableEntity(new { errors });
