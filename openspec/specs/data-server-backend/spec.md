@@ -743,7 +743,6 @@ public class HttpsSettings
     public string StoreName { get; set; } = "My";
     public string? Thumbprint { get; set; }
     public HttpProtocolsOption Protocols { get; set; } = HttpProtocolsOption.HTTP1_AND_HTTP2;
-    public bool AllowInvalidCertificates { get; set; } = false;
 }
 ```
 
@@ -792,17 +791,22 @@ public class HttpsSettings
 - When: HTTP/1 and HTTP/2 clients connect
 - Then: Both work (client chooses)
 
-### 4.4 Allow Invalid Certificates
+### 4.4 Certificate Loadability (REMOVED: AllowInvalidCertificates option)
 
-**Scenario 4.4.1: Reject Invalid Certs in Production**
-- Given: `allowInvalidCertificates: true`, Production environment
-- When: Configuration update attempted
-- Then: Returns 422 "AllowInvalidCertificates forbidden in Production"
+**Removed option:** `allowInvalidCertificates` — browsers/clients block invalid or untrusted
+certificates themselves, so the server does not gate certificates on trust or validity. The
+server verifies only **loadability**: the configured certificate must load and carry a
+private key (otherwise it cannot serve TLS at all — 422 / HTTP-only fallback).
 
-**Scenario 4.4.2: Allow Invalid Certs in Development**
-- Given: `allowInvalidCertificates: true`, Development environment
-- When: Configuration updated with invalid cert
-- Then: Returns 200 (with warning logged)
+**Scenario 4.4.1: Server-side loadability check (retained)**
+- Given: A configured certificate source that loads and has a private key
+- When: Application starts / `PUT /api/config/https`
+- Then: Certificate accepted; HTTPS served (trust/validity enforced by the browser)
+
+**Scenario 4.4.2: Unloadable or key-less certificate (retained)**
+- Given: Missing cert file, wrong password, or certificate without private key
+- When: Application starts / `PUT /api/config/https`
+- Then: 422 / HTTP-only fallback with a clear error message
 
 ### 4.5 HTTPS API
 
