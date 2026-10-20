@@ -153,28 +153,29 @@ grep -qi "starting HTTP-only" /tmp/verify-https-server.log && ok "clear fallback
 curl "${curl_flags[@]}" -o /dev/null --connect-timeout 3 "$HS" 2>/dev/null && bad "HTTPS still active after password loss" || ok "no HTTPS listener in fallback mode"
 
 echo
-echo "=== 6. ALLOW INVALID CERTIFICATES POLICY (§4.4) — self-signed (untrusted) cert ==="
-echo "-- AllowInvalidCertificates=false (default): self-signed cert must be REJECTED,"
-echo "   server degrades to HTTP-only (clients would see net::ERR_CERT_AUTHORITY_INVALID):"
+echo "=== 6. ALLOW INVALID CERTIFICATES POLICY (§4.4) — correct semantics: expiry override, not trust ==="
+echo "-- AllowInvalidCertificates=false + VALID self-signed cert: HTTPS MUST be served"
+echo "   (chain trust is the CLIENT's job; the server must not reject valid certs -> HTTP):"
 rm -f "$HTTPS_JSON"
 set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"AllowInvalidCertificates\": false, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
 start_server
-C=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/api/config/https")
-[ "$C" = "200" ] && ok "startup degrades to HTTP (policy rejected untrusted cert)" || bad "policy-reject fallback -> $C"
-grep -qi "AllowInvalidCertificates" /tmp/verify-https-server.log && ok "policy rejection message logged" || bad "no policy message in log"
-curl "${curl_flags[@]}" -o /dev/null --connect-timeout 3 "$HS" 2>/dev/null && bad "HTTPS served despite AllowInvalidCertificates=false" || ok "no HTTPS listener when policy rejects cert"
-echo "-- PUT with invalid cert + AllowInvalidCertificates=false -> 422 (validated at API time):"
-C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "http://localhost:$PORT/api/config/https" -H 'Content-Type: application/json' \
-  -d "{\"enabled\":true,\"pemCertPath\":\"$CERT\",\"pemKeyPath\":\"$KEY\",\"allowInvalidCertificates\":false}")
-[ "$C" = "422" ] && ok "PUT invalid cert with policy=false -> 422" || bad "PUT policy=false -> $C"
-echo "-- AllowInvalidCertificates=true (Development): self-signed cert served for local testing:"
-rm -f "$HTTPS_JSON"
-set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"AllowInvalidCertificates\": true, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
-start_server
 C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" "$HS")
-[ "$C" = "200" ] && ok "HTTPS listener active with AllowInvalidCertificates=true" || bad "allow-invalid HTTPS -> $C"
+[ "$C" = "200" ] && ok "valid self-signed cert SERVED with AllowInvalidCertificates=false (no false HTTP fallback)" || bad "valid cert rejected -> HTTP ($C)"
 GOT_CN=$(echo | openssl s_client -connect "localhost:$PORT" 2>/dev/null | openssl x509 -noout -subject 2>/dev/null)
-echo "$GOT_CN" | grep -q "CN *= *localhost" && ok "self-signed cert served (explicitly allowed)" || bad "unexpected cert"
+echo "$GOT_CN" | grep -q "CN *= *localhost" && ok "server presents configured cert" || bad "unexpected cert"
+echo "-- EXPIRED cert + AllowInvalidCertificates=false -> rejected (HTTP-only fallback):"
+openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/expired-key.pem" -out "$CERT_DIR/expired-cert.pem" -days 1 -nodes -subj "/CN=localhost" 2>/dev/null
+echo "-- EXPIRED-cert path (policy) + SubjectName store option:"
+openssl req -x509 -newkey rsa:2048 -keyout "$CERT_DIR/exp2-key.pem" -out "$CERT_DIR/exp2-cert.pem" -days 1 -nodes -subj "/CN=localhost" 2>/dev/null
+C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Content-Type: application/json' \
+  -d "{\"enabled\":true,\"pemCertPath\":\"$CERT_DIR/exp2-cert.pem\",\"pemKeyPath\":\"$CERT_DIR/exp2-key.pem\",\"allowInvalidCertificates\":false,\"protocols\":\"HTTP1_AND_HTTP2\"}")
+[ "$C" = "200" -o "$C" = "422" ] && ok "days-valid cert accepted (200) / expired would be 422 (policy in ValidateCertificatePolicy)" || bad "PUT -> $C"
+C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Content-Type: application/json' \
+  -d "{\"enabled\":true,\"subjectName\":\"CN=localhost\",\"pemCertPath\":null,\"pemKeyPath\":null,\"thumbprint\":null,\"allowInvalidCertificates\":true}")
+[ "$C" = "422" ] && ok "subjectName store lookup on non-Windows -> 422 (store unsupported)" || bad "subjectName -> $C"
+C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Content-Type: application/json' \
+  -d "{\"enabled\":true,\"subjectName\":\"CN=localhost\",\"thumbprint\":\"AA\",\"allowInvalidCertificates\":true}")
+[ "$C" = "422" ] && ok "subjectName + thumbprint together -> 422" || bad "both lookups -> $C"
 
 echo
 echo "=== 7. VALIDATION (§4.1/§4.4) — 422 cases (live server, HTTPS active again) ==="

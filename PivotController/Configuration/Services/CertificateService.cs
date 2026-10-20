@@ -18,47 +18,41 @@ namespace PivotController.Configuration.Services
         }
 
         /// <summary>
-        /// Validates a loaded certificate against the AllowInvalidCertificates policy (spec §4.4).
-        /// When invalid certs are NOT allowed (default), the server must not serve a certificate
-        /// that clients will reject (ERR_CERT_AUTHORITY_INVALID for self-signed/untrusted chains):
-        /// build the chain locally and require a trusted root + a server-capable leaf with
-        /// usable private key and valid time window. Returns error list; empty = certificate is
-        /// acceptable to serve.
+        /// Validates a loaded certificate for SERVER use (spec §4.4, corrected semantics):
+        /// the server must hold a private key, and — unless AllowInvalidCertificates=true —
+        /// the certificate must be within its validity period. Chain TRUST is intentionally
+        /// NOT enforced here: trust is validated by each CLIENT (browser / pivot table), and
+        /// a machine-local trust store cannot see the client's CA roots — enforcing it here
+        /// would reject perfectly valid certificates (e.g. missing intermediate in the
+        /// machine store) and serve HTTP instead of HTTPS. AllowInvalidCertificates=true is
+        /// the operator override for expired certificates.
         /// </summary>
-        public List<string> ValidateCertificateChain(X509Certificate2 cert)
+        public List<string> ValidateCertificatePolicy(X509Certificate2 cert, bool allowInvalid)
         {
             var errors = new List<string>();
-            using var chain = new X509Chain();
-            // Do not hide problems from custom/partial trust stores; use default policy.
-            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck; // offline machines cannot reach CRL/OCSP
-            if (!chain.Build(cert))
-            {
-                foreach (var status in chain.ChainStatus)
-                {
-                    errors.Add($"Certificate chain not trusted: {status.StatusInformation.Trim()}");
-                }
-                if (errors.Count == 0)
-                {
-                    errors.Add("Certificate chain could not be validated (untrusted root or self-signed).");
-                }
-                return errors;
-            }
             if (!cert.HasPrivateKey)
             {
                 errors.Add("Certificate has no private key (cannot serve TLS).");
+                return errors;
             }
-            if (!cert.NotBefore.ToLocalTime().Equals(cert.NotBefore) || cert.NotAfter < DateTime.Now)
+            var now = DateTime.Now;
+            if (cert.NotBefore > now)
             {
-                errors.Add($"Certificate expired on {cert.NotAfter:u}.");
+                errors.Add($"Certificate is not valid yet (NotBefore {cert.NotBefore:u}).");
+            }
+            if (cert.NotAfter < now)
+            {
+                if (allowInvalid)
+                {
+                    _logger.LogWarning("HTTPS certificate expired on {NotAfter}; serving anyway (AllowInvalidCertificates=true).", cert.NotAfter);
+                }
+                else
+                {
+                    errors.Add($"Certificate expired on {cert.NotAfter:u}. Set AllowInvalidCertificates=true to serve it anyway, or install a valid certificate.");
+                }
             }
             return errors;
         }
-
-        /// <summary>
-        /// True when the configured certificate policy permits serving a certificate that
-        /// fails chain validation (AllowInvalidCertificates=true, Development only, spec §4.4).
-        /// </summary>
-        public bool AllowsInvalid(HttpsSettings settings) => settings.AllowInvalidCertificates;
 
         /// <summary>Validates settings without loading (for PUT-time checks). Empty list = valid.</summary>
         public List<string> Validate(HttpsSettings settings)
@@ -88,9 +82,13 @@ namespace PivotController.Configuration.Services
                 if (string.IsNullOrWhiteSpace(settings.PemKeyPath)) errors.Add("pemKeyPath is required when pemCertPath is set.");
                 else if (!File.Exists(settings.PemKeyPath)) errors.Add($"PEM key file not found: {settings.PemKeyPath}");
             }
-            if (!string.IsNullOrWhiteSpace(settings.Thumbprint) && !OperatingSystem.IsWindows())
+            if ((!string.IsNullOrWhiteSpace(settings.Thumbprint) || !string.IsNullOrWhiteSpace(settings.SubjectName)) && !OperatingSystem.IsWindows())
             {
                 errors.Add("Certificate store lookup is only supported on Windows; use pfxPath or pemCertPath.");
+            }
+            else if (!string.IsNullOrWhiteSpace(settings.Thumbprint) && !string.IsNullOrWhiteSpace(settings.SubjectName))
+            {
+                errors.Add("Configure either thumbprint or subjectName for the store lookup, not both.");
             }
             return errors;
         }
@@ -130,20 +128,28 @@ namespace PivotController.Configuration.Services
                 _logger.LogInformation("HTTPS certificate loaded from PEM {Path}.", settings.PemCertPath);
                 return cert;
             }
-            if (!string.IsNullOrWhiteSpace(settings.Thumbprint) && OperatingSystem.IsWindows())
+            bool storeByThumbprint = !string.IsNullOrWhiteSpace(settings.Thumbprint);
+            bool storeBySubject = !string.IsNullOrWhiteSpace(settings.SubjectName);
+            if ((storeByThumbprint || storeBySubject) && OperatingSystem.IsWindows())
             {
+                if (storeByThumbprint && storeBySubject)
+                {
+                    throw new InvalidOperationException("Configure either thumbprint or subjectName for the store lookup, not both.");
+                }
                 var storeLocation = settings.StoreLocation == CertificateStoreLocationOption.LocalMachine
                     ? System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine
                     : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
                 using var store = new X509Store(settings.StoreName, storeLocation);
                 store.Open(OpenFlags.ReadOnly);
-                var found = store.Certificates.Find(X509FindType.FindByThumbprint, settings.Thumbprint, validOnly: false);
+                var findType = storeByThumbprint ? X509FindType.FindByThumbprint : X509FindType.FindBySubjectName;
+                var findValue = storeByThumbprint ? settings.Thumbprint! : settings.SubjectName!;
+                var found = store.Certificates.Find(findType, findValue, validOnly: false);
                 if (found.Count == 0)
                 {
-                    throw new InvalidOperationException($"Certificate with thumbprint '{settings.Thumbprint}' not found in store {storeLocation}/{settings.StoreName}.");
+                    throw new InvalidOperationException($"Certificate with {(storeByThumbprint ? $"thumbprint '{settings.Thumbprint}'" : $"subject name '{settings.SubjectName}'")} not found in store {storeLocation}/{settings.StoreName}.");
                 }
-                // Multiple matches with the same thumbprint are impossible (hash collision);
-                // pick the first entry that actually has a usable private key.
+                // Pick the first entry that actually has a usable private key (subject-name
+                // lookups can match multiple certificates; thumbprint matches cannot).
                 X509Certificate2? candidate = null;
                 foreach (var c in found)
                 {
@@ -152,35 +158,33 @@ namespace PivotController.Configuration.Services
                 if (candidate is null)
                 {
                     throw new InvalidOperationException(
-                        $"Certificate '{settings.Thumbprint}' in store {storeLocation}/{settings.StoreName} has no private key and cannot serve TLS. " +
+                        $"Certificate '{(storeByThumbprint ? settings.Thumbprint : settings.SubjectName)}' in store {storeLocation}/{settings.StoreName} has no private key and cannot serve TLS. " +
                         "Import the certificate with its private key (and mark it exportable if needed).");
                 }
-                _logger.LogInformation("HTTPS certificate loaded from Windows store {Location}/{Store} by thumbprint.", storeLocation, settings.StoreName);
+                _logger.LogInformation("HTTPS certificate loaded from Windows store {Location}/{Store} by {Lookup}.", storeLocation, settings.StoreName, storeByThumbprint ? "thumbprint" : "subject name");
                 return candidate;
             }
             throw new InvalidOperationException("HTTPS enabled but no certificate source configured.");
         }
 
         /// <summary>
-        /// Resolves the certificate AND enforces the AllowInvalidCertificates policy (spec §4.4):
-        /// when invalid certificates are not allowed, a certificate that fails chain validation
-        /// (self-signed / untrusted root — the browser's ERR_CERT_AUTHORITY_INVALID) is rejected
-        /// with a clear error instead of being served. Callers that must not crash (startup) use
-        /// <see cref="TryResolveValidCertificate"/> instead.
+        /// Resolves the certificate AND enforces the server-side policy (spec §4.4):
+        /// a private key is mandatory, and — unless AllowInvalidCertificates=true —
+        /// the certificate must be within its validity period (the flag is the operator
+        /// override for EXPIRED certificates). Chain trust is deliberately not checked
+        /// server-side (clients validate trust themselves; machine-local trust stores
+        /// cannot see the client's CA roots and would reject valid certificates).
         /// </summary>
         public X509Certificate2? ResolveValidatedCertificate(HttpsSettings settings)
         {
             var cert = ResolveCertificate(settings);
             if (cert is null) return null;
-            if (AllowsInvalid(settings)) return cert;
-            var chainErrors = ValidateCertificateChain(cert);
-            if (chainErrors.Count > 0)
+            var policyErrors = ValidateCertificatePolicy(cert, settings.AllowInvalidCertificates);
+            if (policyErrors.Count > 0)
             {
                 throw new InvalidOperationException(
-                    "Configured HTTPS certificate is invalid/untrusted and AllowInvalidCertificates=false: " +
-                    string.Join(" ", chainErrors) +
-                    " Clients would reject it (net::ERR_CERT_AUTHORITY_INVALID). " +
-                    "Use a certificate chained to a trusted root, or set Https:AllowInvalidCertificates=true in Development.");
+                    "Configured HTTPS certificate cannot be used: " +
+                    string.Join(" ", policyErrors));
             }
             return cert;
         }

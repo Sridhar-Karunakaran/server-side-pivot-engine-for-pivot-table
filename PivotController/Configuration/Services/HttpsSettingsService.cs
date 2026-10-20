@@ -50,7 +50,7 @@ namespace PivotController.Configuration.Services
         /// <summary>Merge-patch: applies only provided values, validates, persists (sanitized).</summary>
         public (HttpsSettings Settings, bool RequiresRestart, List<string> Errors) ApplyPatch(
             bool? enabled, string? pfxPath, string? pfxPassword, string? pemCertPath, string? pemKeyPath,
-            CertificateStoreLocationOption? storeLocation, string? storeName, string? thumbprint,
+            CertificateStoreLocationOption? storeLocation, string? storeName, string? thumbprint, string? subjectName,
             HttpProtocolsOption? protocols, bool? allowInvalidCertificates, bool environmentIsProduction)
         {
             lock (_sync)
@@ -65,6 +65,7 @@ namespace PivotController.Configuration.Services
                 if (storeLocation.HasValue) candidate.StoreLocation = storeLocation.Value;
                 if (storeName != null) candidate.StoreName = storeName;
                 candidate.Thumbprint = thumbprint == null ? candidate.Thumbprint : Normalize(thumbprint);
+                candidate.SubjectName = subjectName == null ? candidate.SubjectName : Normalize(subjectName);
                 if (protocols.HasValue) candidate.Protocols = protocols.Value;
                 if (allowInvalidCertificates.HasValue) candidate.AllowInvalidCertificates = allowInvalidCertificates.Value;
 
