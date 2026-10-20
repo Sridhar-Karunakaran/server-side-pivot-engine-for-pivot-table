@@ -2,9 +2,43 @@
 
 **Date:** 2024-12-19
 
-**Version:** 2.1
+**Version:** 2.2
 
 **Implementation Order:** Index Configuration (Step 1) → General Settings → Data Storage Settings → Database Query Settings → HTTPS Settings → Security Settings → Report Sharing Settings → Client-Side Integration (Step 8 - Final)
+
+---
+
+## IMPLEMENTATION STATUS (updated after Steps 1–3 implementation)
+
+| Step | Section | Status | Notes |
+|------|---------|--------|-------|
+| 1 | §0 Index Configuration | ✅ Implemented & verified | All scenarios verified live; see deltas below |
+| 2 | §1 General Settings | ✅ Implemented & verified | All scenarios verified live; see deltas below |
+| 3 | §2 Data Storage Settings | ✅ Implemented & verified | CacheSizeLimit aligned with Flexmonster semantics; see deltas below |
+| 4–8 | §3–§7 | ⬜ Not started | Database query, HTTPS, security, report sharing, client-side integration |
+
+### Implementation deltas (verified behavior, deviates from original spec text)
+
+**Step 1 — Index Configuration**
+- `CsvDelimiter`/`CsvDecimalSeparator`/`CsvThousandsSeparator` are **enums** (§0.6): `CsvThousandsSeparator ∈ {Comma, Dot, Space}`, `CsvDecimalSeparator ∈ {Comma, Dot}`. Both enum names (`"Dot"`) and raw symbols (`"."`, `","`, `" "`) are accepted in appsettings.json (TypeConverter), API bodies (System.Text.Json converter), and `indexes.json` (Newtonsoft).
+- Field mapping endpoints added beyond §0.7: `GET /api/indexes/{index}/fields` (detected/mapped/effective types), `PUT /api/indexes/{index}/fields/{fieldName}` (`{"type":"Number|String|Date"}`), `DELETE` to revert. Mappings are injected into pivot requests via `CustomProperties.FieldType` + `DataOptions.FieldMapping`, so a Data Server type change reflects in the client pivot table on the next request (including demotion, e.g. datetime → string).
+- Index routing accepts the index from the request **body or `?index=` query** (fallback to controller default `ServerIndexName`) — the query form allows a page to pin a grid to its index without body patching.
+- SourceType immutability (§0.4) is strict: a PUT that supplies a different sourceType returns 422; when the body omits `sourceType`, the controller back-fills it from the existing definition.
+- Bootstrap resilience: a persisted/appsettings index whose source is missing no longer crashes startup — it registers with `Failed` status and remains fixable via API.
+- Per-attempt retry logging: each load failure logs `attempt n/N ... Retrying in X ms`.
+
+**Step 2 — General Settings**
+- Port binding: `General:Port` (appsettings) drives Kestrel; launchSettings `applicationUrl` was removed so appsettings wins locally; only an explicit `ASPNETCORE_URLS` overrides.
+- MinimumLogLevel is enforced by a runtime-adjustable `MinimumLevelLoggerProvider` (sole console provider) — level changes (API PUT or `config.json` hot-reload via FileSystemWatcher, ~100ms) filter console output immediately. A test helper `POST /api/config/general/test-log` emits one entry per severity for local verification.
+- DataFolder: `reports/` and `logs/` subdirectories created; writability probe at startup; `../../` traversal rejected with 422.
+- Merge-patch: `PUT /api/config/general` — Port/DataFolder report `requiresRestart: true`, MinimumLogLevel `false`.
+
+**Step 3 — Data Storage Settings**
+- **`CacheSizeLimit` follows Flexmonster Data Server semantics** (supersedes the original §2.3 wording): *the maximum number of cached server responses for every index*. Per-index LRU (not a global entry count): exceeding the limit evicts that index's least-recently-used cached engine response only; other indexes are unaffected. Each pivot report (rows/columns/values) hashes to one cached response. **`0` disables response caching** (every request rebuilds from the warm per-index dataset).
+- The per-index dataset cache (`data:{index}`) is NOT subject to CacheSizeLimit (it backs KeepDataOnRefresh and fast rebuilds).
+- `datastorage.json` persistence: values set via `PUT` (CacheSizeLimit/MaxCacheItemSizeBytes require restart) are loaded at startup via `LoadPersisted()`; when the file is absent, appsettings.json values stand (logged explicitly).
+- `GET /api/config/datastorage/cache-stats` observability endpoint: per-index cached-response counts vs the limit (e.g. `"Sales-Json (2 responses)"`).
+- Retry (§2.2): exponential backoff 250ms→500ms→1000ms… (±20% jitter) on transient IO failures; `RetryAttempts` runtime-changeable; failures log per-attempt lines.
 
 ---
 
@@ -548,7 +582,7 @@ public class DataStorageSettings
 
 ### 2.3 Cache Size Limit Configuration
 
-**SHALL** enforce maximum number of cached index datasets.
+**SHALL** enforce the maximum number of cached server responses **per index** (Flexmonster Data Server semantics; see implementation deltas above).
 
 **Scenario 2.3.1: Default Cache Limit**
 - Given: `cacheSizeLimit: 100` (default)
