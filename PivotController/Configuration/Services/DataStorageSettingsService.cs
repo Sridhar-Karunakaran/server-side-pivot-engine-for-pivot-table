@@ -106,6 +106,12 @@ namespace PivotController.Configuration.Services
         {
             lock (_sync)
             {
+                // No persisted file yet: appsettings.json values stand (fresh install).
+                if (!File.Exists(SettingsFilePath))
+                {
+                    _logger.LogInformation("No persisted datastorage.json; appsettings.json values in effect.");
+                    return;
+                }
                 var persisted = _store.Load<DataStorageSettings>(SettingsFilePath, new DataStorageSettings());
                 var errors = persisted.Validate();
                 if (errors.Count > 0)
