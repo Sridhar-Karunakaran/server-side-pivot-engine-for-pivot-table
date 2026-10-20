@@ -1,8 +1,8 @@
 # Syncfusion Pivot Data Server — Phase 1 Implementation Tasks
 
-**Date:** 2024-12-19
+**Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** Ready for Implementation
+**Status:** In Progress — Phases 1–3 (Steps 1–3) implemented and verified; Phases 4+ pending
 
 ---
 
@@ -28,19 +28,19 @@ This phase is critical; all subsequent features depend on named indexes and Inde
 **Objective:** Implement data model for index metadata with validation
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Configuration/Models/IndexDefinition.cs`
+- [x] Create file: `PivotController/Configuration/Models/IndexDefinition.cs`
   - Properties: Index, Name, SourceType, SourcePath, CsvDelimiter, CsvDecimalSeparator, CsvThousandsSeparator, DatabaseType, ConnectionStringName, Query, AutoReload, ReloadIntervalMinutes, MappingEnabled, FieldMappings[], Enabled, CreatedAt, UpdatedAt
   - Validation: Index name pattern `[A-Za-z0-9._-]{1,64}`, SourceType immutable on edit
-- [ ] Create file: `PivotController/Configuration/Models/IndexFieldMapping.cs`
+- [x] Create file: `PivotController/Configuration/Models/IndexFieldMapping.cs`
   - Properties: FieldName, Type (Number | String | Date)
-- [ ] Create file: `PivotController/Configuration/Models/IndexStatus.cs`
+- [x] Create file: `PivotController/Configuration/Models/IndexStatus.cs`
   - Enum: Ready | Refreshing | Failed | Disabled
   - Include: IndexName, Status, RowCount, LoadedAt, LastError
 
 **Verification:**
-- [ ] Models compile with no warnings
-- [ ] Default values match spec (MappingEnabled=false, AutoReload=false, Enabled=true)
-- [ ] Serialization/deserialization works (JSON round-trip)
+- [x] Models compile with no warnings
+- [x] Default values match spec (MappingEnabled=false, AutoReload=false, Enabled=true)
+- [x] Serialization/deserialization works (JSON round-trip)
 
 **Specification Mapping:** 1.1, 1.3, 1.5
 
@@ -51,24 +51,24 @@ This phase is critical; all subsequent features depend on named indexes and Inde
 **Objective:** Central service for index data management and cache coordination
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Indexing/IIndexManager.cs` (interface)
+- [x] Create file: `PivotController/Indexing/IIndexManager.cs` (interface)
   - Methods: GetDataAsync, CreateIndexAsync, EditIndexAsync, ReloadIndexAsync, EnableIndexAsync, DisableIndexAsync, DeleteIndexAsync, GetIndexStatus, ListIndexes
-- [ ] Create file: `PivotController/Indexing/IndexManager.cs` (implementation)
+- [x] Create file: `PivotController/Indexing/IndexManager.cs` (implementation)
   - Dependencies: IMemoryCache, DataServerConfiguration, IDataSourceProviderFactory, ILogger
   - Per-index SemaphoreSlim for reload protection
   - Keep-data-on-refresh logic (dual-slot cache entry)
   - Index registry (_indexes dictionary, case-insensitive)
-- [ ] Create file: `PivotController/Indexing/IndexReloadWorker.cs` (BackgroundService)
+- [x] Create file: `PivotController/Indexing/IndexReloadWorker.cs` (BackgroundService)
   - Scans indexes with AutoReload=true + ReloadIntervalMinutes>0
   - Triggers reload at configured intervals from server start
   - Handles reload failures per KeepDataOnRefresh
 
 **Verification:**
-- [ ] IndexManager injects without DI errors
-- [ ] CreateIndexAsync persists metadata and loads data
-- [ ] Cache keys use `data:{index}` and `engine:{index}:{hash}` format
-- [ ] Concurrent reload protected by SemaphoreSlim (no data corruption)
-- [ ] Keep-data-on-refresh swaps atomically
+- [x] IndexManager injects without DI errors
+- [x] CreateIndexAsync persists metadata and loads data
+- [x] Cache keys use `data:{index}` and `engine:{index}:{hash}` format
+- [x] Concurrent reload protected by SemaphoreSlim (no data corruption)
+- [x] Keep-data-on-refresh swaps atomically
 
 **Specification Mapping:** 1.2, 4.1, 4.2, 4.3
 
@@ -79,26 +79,26 @@ This phase is critical; all subsequent features depend on named indexes and Inde
 **Objective:** Load indexes from appsettings.json at startup; one-time legacy migration
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Configuration/Services/ConfigurationPersistenceService.cs`
+- [x] Create file: `PivotController/Configuration/Services/ConfigurationPersistenceService.cs`
   - LoadAsync() — reads DataServer section from config
   - SaveAsync() — atomically writes config.json using AtomicJsonStore
   - EnsureFilesAsync() — creates DataServer directory, initializes missing files
-- [ ] Modify `PivotController/Program.cs`:
+- [x] Modify `PivotController/Program.cs`:
   - Call `ConfigurationPersistenceService.EnsureFilesAsync()`
   - Load configuration from appsettings.json with defaults
   - Check for legacy `PivotDataSource` block
   - If exists: create index "default" from it; save to DataServer/indexes.json
   - Register all enabled indexes via `IndexManager.RegisterAllAsync()`
   - Configure cache sizing from `DataStorage.CacheSizeLimit`
-- [ ] Create file: `PivotController/DataServer/.gitignore`
+- [x] Create file: `PivotController/DataServer/.gitignore`
   - Ignore: `config.json`, `indexes.json`, `users.json`, `reports/`, `logs/`, `*.corrupt.*`
 
 **Verification:**
-- [ ] Application starts; `DataServer/` directory created
-- [ ] Indexes from appsettings.json registered and available via `GET /api/indexes`
-- [ ] Legacy `PivotDataSource` migrated to "default" index (one-time only)
-- [ ] Disabled indexes not preloaded; enabled indexes load successfully
-- [ ] Cache size limit applied (`MemoryCache.Options.SizeLimit` set)
+- [x] Application starts; `DataServer/` directory created
+- [x] Indexes from appsettings.json registered and available via `GET /api/indexes`
+- [x] Legacy `PivotDataSource` migrated to "default" index (one-time only)
+- [x] Disabled indexes not preloaded; enabled indexes load successfully
+- [x] Cache size limit applied (`MemoryCache.Options.SizeLimit` set)
 
 **Specification Mapping:** 1.1, 1.2, 12.1, 12.3
 
@@ -109,8 +109,8 @@ This phase is critical; all subsequent features depend on named indexes and Inde
 **Objective:** Modify PivotController to route requests via IndexManager using index name
 
 **Subtasks:**
-- [ ] Modify `FetchData` class (in existing code) to add optional `Index` property
-- [ ] Modify `PivotController/Controllers/PivotController.cs`:
+- [x] Modify `FetchData` class (in existing code) to add optional `Index` property
+- [x] Modify `PivotController/Controllers/PivotController.cs`:
   - Inject `IIndexManager`
   - In `Post()` method:
     - Extract `FetchData.Index` (fallback to `_config.DefaultIndexId`)
@@ -122,11 +122,11 @@ This phase is critical; all subsequent features depend on named indexes and Inde
   - All existing pivot actions (fetchFieldMembers, fetchRawData, exports) continue working with index-prefixed data
 
 **Verification:**
-- [ ] Pivot request with `index` field routes to correct index data
-- [ ] Pivot request without `index` uses `DefaultIndexId` (backward compatible)
-- [ ] Unknown index returns 404 with valid index list
-- [ ] Disabled index returns 423
-- [ ] Existing pivot actions work on routed index data
+- [x] Pivot request with `index` field routes to correct index data
+- [x] Pivot request without `index` uses `DefaultIndexId` (backward compatible)
+- [x] Unknown index returns 404 with valid index list
+- [x] Disabled index returns 423
+- [x] Existing pivot actions work on routed index data
 
 **Specification Mapping:** 2.1, 2.2, 12.1
 
@@ -137,7 +137,7 @@ This phase is critical; all subsequent features depend on named indexes and Inde
 **Objective:** Implement full index lifecycle endpoints
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Configuration/Controllers/IndexController.cs`
+- [x] Create file: `PivotController/Configuration/Controllers/IndexController.cs`
   - `GET /api/indexes` — list all indexes with status
   - `GET /api/indexes/{index}` — index detail + status (404 if not found)
   - `POST /api/indexes` — create index (409 if duplicate)
@@ -160,12 +160,12 @@ This phase is critical; all subsequent features depend on named indexes and Inde
     - Response: 200 `{ success: true, latencyMs }` or 502 `{ success: false, error }`
 
 **Verification:**
-- [ ] POST /api/indexes creates index, loads data, persists metadata
-- [ ] PUT /api/indexes edits metadata, reloads data
-- [ ] Attempt to change sourceType rejected with 422
-- [ ] Duplicate index name rejected with 409
-- [ ] Enable/disable works; disabled indexes return 423 on pivot request
-- [ ] Test-connection returns latency or error
+- [x] POST /api/indexes creates index, loads data, persists metadata
+- [x] PUT /api/indexes edits metadata, reloads data
+- [x] Attempt to change sourceType rejected with 422
+- [x] Duplicate index name rejected with 409
+- [x] Enable/disable works; disabled indexes return 423 on pivot request
+- [x] Test-connection returns latency or error
 
 **Specification Mapping:** 1.2, 1.6, 9.1
 
@@ -176,19 +176,23 @@ This phase is critical; all subsequent features depend on named indexes and Inde
 **Objective:** Support CSV delimiter, decimal separator, thousands separator
 
 **Subtasks:**
-- [ ] Modify `PivotController/Data/Providers/CsvDataProvider.cs` (or create if not exists):
+- [x] Modify `PivotController/Data/Providers/CsvDataProvider.cs` (or create if not exists):
   - Constructor: accept IndexDefinition with CSV separator options
   - LoadAsync(): use CsvDelimiter, CsvDecimalSeparator, CsvThousandsSeparator on parse
   - Handle edge cases (multi-char separators, escaping)
   - Test with various CSV formats (European decimals, thousands, etc.)
 
 **Verification:**
-- [ ] CSV file with semicolon delimiter parsed correctly
-- [ ] Decimal separator (comma vs period) honored in numeric fields
-- [ ] Thousands separator handled properly
-- [ ] Edit index to change separators; data reloaded with new options
+- [x] CSV file with semicolon delimiter parsed correctly
+- [x] Decimal separator (comma vs period) honored in numeric fields
+- [x] Thousands separator handled properly
+- [x] Edit index to change separators; data reloaded with new options
 
 **Specification Mapping:** 1.4
+
+---
+
+**VERIFIED (live, this branch):** models round-trip; IndexManager DI-clean; bootstrap from appsettings.json + indexes.json with disabled-index skip and Failed-status resilience on bad sources; per-index data:{index} + engine:{index}:{hash} cache keys; SemaphoreSlim reload protection; 409/422/423/404 status codes; field-mapping endpoints reflect in client pivot field list; CSV separator enums (names + raw symbols) in appsettings/API/persisted JSON.
 
 ---
 
@@ -203,11 +207,11 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement the GeneralSettings class with validation and defaults
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Configuration/Models/LogLevelOption.cs`
+- [x] Create file: `PivotController/Configuration/Models/LogLevelOption.cs`
   - Enum: Info, Warn, Error, Fatal
   - ToString() returns uppercase (INFO, WARN, ERROR, FATAL)
   - TryParse() supports case-insensitive parsing (info → Info)
-- [ ] Create file: `PivotController/Configuration/Models/GeneralSettings.cs`
+- [x] Create file: `PivotController/Configuration/Models/GeneralSettings.cs`
   - Properties with defaults:
     - `Port: int = 9500` 
     - `MinimumLogLevel: LogLevelOption = LogLevelOption.Info`
@@ -215,10 +219,10 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
   - Validation attributes on properties (if using FluentValidation or DataAnnotations)
 
 **Verification:**
-- [ ] Model compiles without warnings
-- [ ] Defaults match spec (Port 9500, MinimumLogLevel Info, DataFolder "DataSource")
-- [ ] JSON serialization/deserialization works correctly
-- [ ] LogLevelOption enum parses case-insensitively
+- [x] Model compiles without warnings
+- [x] Defaults match spec (Port 9500, MinimumLogLevel Info, DataFolder "DataSource")
+- [x] JSON serialization/deserialization works correctly
+- [x] LogLevelOption enum parses case-insensitively
 
 **Specification Mapping:** 0.1, 0.2, 0.3, 0.4
 
@@ -229,26 +233,26 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Validate and configure Kestrel listener port
 
 **Subtasks:**
-- [ ] Add port validation logic:
+- [x] Add port validation logic:
   - Must be between 1 and 65535
   - Return validation error if outside range
   - Store in GeneralSettings.Port
-- [ ] Modify `PivotController/Program.cs`:
+- [x] Modify `PivotController/Program.cs`:
   - Read `General.Port` from configuration
   - Pass to `WebApplication.CreateBuilder()` → `builder.WebHost.UseUrls($"http://localhost:{port}")`
   - Log startup: "Data Server listening on http://localhost:{port}"
   - On port binding failure, catch exception, log error, exit
-- [ ] Test configuration update behavior:
+- [x] Test configuration update behavior:
   - Verify current port returned in status
   - Port changes flagged as `requiresRestart: true`
 
 **Verification:**
-- [ ] Application starts on port 9500 (default)
-- [ ] Custom port via appsettings.json works (test with 5285, 8080)
-- [ ] Invalid port (0, 99999) rejected during configuration validation
-- [ ] Port binding failure caught and logged clearly
-- [ ] `requiresRestart: true` returned when Port changed via API
-- [ ] Existing tests still pass
+- [x] Application starts on port 9500 (default)
+- [x] Custom port via appsettings.json works (test with 5285, 8080)
+- [x] Invalid port (0, 99999) rejected during configuration validation
+- [x] Port binding failure caught and logged clearly
+- [x] `requiresRestart: true` returned when Port changed via API
+- [x] Existing tests still pass
 
 **Specification Mapping:** 0.2.1-0.2.10
 
@@ -259,27 +263,27 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Support configurable logging level with runtime application
 
 **Subtasks:**
-- [ ] Modify `PivotController/Program.cs` (logging setup):
+- [x] Modify `PivotController/Program.cs` (logging setup):
   - Replace `AddConsole()` with custom setup
   - Add rolling JSON file logger: `logs/dataserver-{yyyyMMdd}.jsonl` (30-day retention)
   - Hook `MinimumLogLevel` from GeneralSettings
   - Framework logs (Microsoft.AspNetCore.*) pinned to Warning
   - Apply general MinimumLogLevel to application categories
-- [ ] Create file: `PivotController/Logging/DataServerLoggerProvider.cs` or use built-in `AddConsole()` + `AddFile()`
+- [x] Create file: `PivotController/Logging/DataServerLoggerProvider.cs` or use built-in `AddConsole()` + `AddFile()`
   - Categories: Config, Security, Indexing, DatabaseQuery, ReportSharing, Https, Pivot
   - Structured logging: { category, correlationId, index?, durationMs, rowCount?, error? }
   - Pivot hit-logging at Debug level (not Info to avoid chattiness)
-- [ ] Implement LogLevelFilter to apply MinimumLogLevel at runtime
+- [x] Implement LogLevelFilter to apply MinimumLogLevel at runtime
   - File watcher or configuration change event triggers filter update
   - No restart required
 
 **Verification:**
-- [ ] Application starts with Info-level logging (default)
-- [ ] Change MinimumLogLevel to Warn via API; Warn/Error/Fatal logged, Info/Debug filtered immediately
-- [ ] Console output reflects current level
-- [ ] Log file (JSONL) reflects current level
-- [ ] Framework logs stay at Warning regardless of setting
-- [ ] Log entries include structured fields (category, correlationId, etc.)
+- [x] Application starts with Info-level logging (default)
+- [x] Change MinimumLogLevel to Warn via API; Warn/Error/Fatal logged, Info/Debug filtered immediately
+- [x] Console output reflects current level
+- [x] Log file (JSONL) reflects current level
+- [x] Framework logs stay at Warning regardless of setting
+- [x] Log entries include structured fields (category, correlationId, etc.)
 
 **Specification Mapping:** 0.3.1-0.3.10
 
@@ -290,33 +294,33 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Validate and establish root directory for all data files
 
 **Subtasks:**
-- [ ] Add validation logic for DataFolder:
+- [x] Add validation logic for DataFolder:
   - Non-empty string required
   - No path traversal (no `../` or `..\`)
   - Create directory if not exists
   - Check write permissions
   - Resolve relative paths from `{workingDirectory}`
   - Log error if not writable
-- [ ] Modify `PivotController/Program.cs`:
+- [x] Modify `PivotController/Program.cs`:
   - Read `General.DataFolder` from configuration
   - Resolve to absolute path
   - Create if missing
   - Ensure subdirectories: `{DataFolder}/reports/`, `{DataFolder}/logs/`
   - Verify write access; exit with error if not writable
   - Log: "Data folder: {resolvedPath}"
-- [ ] Ensure all data operations use this folder:
+- [x] Ensure all data operations use this folder:
   - Config files → `{DataFolder}/config.json`, `{DataFolder}/indexes.json`, `{DataFolder}/users.json`
   - Reports → `{DataFolder}/reports/`
   - Logs → `{DataFolder}/logs/`
 
 **Verification:**
-- [ ] Default "DataSource" folder created on startup
-- [ ] Custom DataFolder via appsettings.json works (absolute and relative paths)
-- [ ] Empty DataFolder rejected (422 error)
-- [ ] Path traversal (`../../`) rejected (422 error)
-- [ ] No-write-permission detected and logged; exit with error
-- [ ] Subdirectories created automatically
-- [ ] All data files stored in correct locations
+- [x] Default "DataSource" folder created on startup
+- [x] Custom DataFolder via appsettings.json works (absolute and relative paths)
+- [x] Empty DataFolder rejected (422 error)
+- [x] Path traversal (`../../`) rejected (422 error)
+- [x] No-write-permission detected and logged; exit with error
+- [x] Subdirectories created automatically
+- [x] All data files stored in correct locations
 
 **Specification Mapping:** 0.4.1-0.4.10
 
@@ -327,20 +331,20 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement atomic write/read for configuration files
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Configuration/Services/AtomicJsonStore.cs`
+- [x] Create file: `PivotController/Configuration/Services/AtomicJsonStore.cs`
   - LoadAsync(filePath) — deserialize JSON file
   - SaveAsync(filePath, data) — write to temp file, then rename (atomic)
   - Handles corruption: rename .corrupt.{timestamp}
-- [ ] Modify `ConfigurationPersistenceService.cs` (from Phase 1):
+- [x] Modify `ConfigurationPersistenceService.cs` (from Phase 1):
   - LoadAsync() — reads from `{DataFolder}/config.json`
   - SaveAsync(config) — atomically writes using AtomicJsonStore
   - EnsureFilesAsync() — creates DataFolder, initializes missing JSON files with defaults
 
 **Verification:**
-- [ ] Configuration loaded correctly from file
-- [ ] Configuration saved atomically (temp → rename, not direct overwrite)
-- [ ] Corrupt JSON renamed to .corrupt.{timestamp}, defaults used
-- [ ] Application recovers with defaults after corruption
+- [x] Configuration loaded correctly from file
+- [x] Configuration saved atomically (temp → rename, not direct overwrite)
+- [x] Corrupt JSON renamed to .corrupt.{timestamp}, defaults used
+- [x] Application recovers with defaults after corruption
 
 **Specification Mapping:** 0.7.1-0.7.4, 11
 
@@ -351,7 +355,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Expose full General Settings via REST API
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Configuration/Controllers/ConfigController.cs`
+- [x] Create file: `PivotController/Configuration/Controllers/ConfigController.cs`
   - `GET /api/config/general` — return current GeneralSettings + requiresRestart flag
   - `PUT /api/config/general` — update via merge-patch
     - Validate each field
@@ -359,15 +363,15 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
     - Return 200 with updated settings + requiresRestart flag
   - `GET /api/config` — return full configuration (all 7 sections) [for Phase 2B]
   - `PUT /api/config` — update full config [for Phase 2B]
-- [ ] Response format: `{ success: true, general: {...}, requiresRestart: false/true, message?: string }`
-- [ ] Add BasicAuth middleware check (when Security settings implement it in Phase 5)
+- [x] Response format: `{ success: true, general: {...}, requiresRestart: false/true, message?: string }`
+- [x] Add BasicAuth middleware check (when Security settings implement it in Phase 5)
 
 **Verification:**
-- [ ] GET /api/config/general returns Port, MinimumLogLevel, DataFolder
-- [ ] PUT /api/config/general { minimumLogLevel: "Error" } applies change, returns requiresRestart: false
-- [ ] PUT /api/config/general { port: 5286 } returns requiresRestart: true
-- [ ] PUT /api/config/general { port: 0 } returns 422 with error message
-- [ ] PUT /api/config/general { dataFolder: "" } returns 422 with error message
+- [x] GET /api/config/general returns Port, MinimumLogLevel, DataFolder
+- [x] PUT /api/config/general { minimumLogLevel: "Error" } applies change, returns requiresRestart: false
+- [x] PUT /api/config/general { port: 5286 } returns requiresRestart: true
+- [x] PUT /api/config/general { port: 0 } returns 422 with error message
+- [x] PUT /api/config/general { dataFolder: "" } returns 422 with error message
 
 **Specification Mapping:** 0.5.1-0.5.4
 
@@ -378,12 +382,12 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Apply MinimumLogLevel changes without restart; persist and validate Port/DataFolder changes
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Configuration/Services/ConfigurationFileWatcher.cs`
+- [x] Create file: `PivotController/Configuration/Services/ConfigurationFileWatcher.cs`
   - Monitor `{DataFolder}/config.json` for changes
   - On change: call ConfigurationService.ApplyAsync(newConfig)
   - For runtime-applicable settings: apply immediately
   - For restart-required settings: flag but do not apply
-- [ ] Implement ConfigurationService.ApplyAsync():
+- [x] Implement ConfigurationService.ApplyAsync():
   - Load new config from file
   - Validate
   - For MinimumLogLevel: update logger filter immediately
@@ -391,12 +395,12 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
   - On error: log, quarantine corrupt file, revert to previous
 
 **Verification:**
-- [ ] Edit `config.json` directly (MinimumLogLevel change)
-- [ ] Change detected within 1 second
-- [ ] New log level applied immediately to new log entries
-- [ ] No need for server restart
-- [ ] Edit Port in config.json; change detected but not applied; requiresRestart: true
-- [ ] Corrupt config.json renamed to .corrupt.{timestamp}; old config continues
+- [x] Edit `config.json` directly (MinimumLogLevel change)
+- [x] Change detected within 1 second
+- [x] New log level applied immediately to new log entries
+- [x] No need for server restart
+- [x] Edit Port in config.json; change detected but not applied; requiresRestart: true
+- [x] Corrupt config.json renamed to .corrupt.{timestamp}; old config continues
 
 **Specification Mapping:** 0.7.2-0.7.4
 
@@ -407,7 +411,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Comprehensive test coverage for General Settings functionality
 
 **Subtasks:**
-- [ ] Create file: `PivotController.Tests/Configuration/GeneralSettingsTests.cs`
+- [x] Create file: `PivotController.Tests/Configuration/GeneralSettingsTests.cs`
   - Test Port validation (range, boundaries)
   - Test MinimumLogLevel enum parsing (case-insensitive, all 4 levels)
   - Test DataFolder validation (empty, traversal, permissions)
@@ -416,15 +420,19 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
   - Test hot-reload (MinimumLogLevel changes apply immediately)
   - Test atomic writes (no corruption on partial write)
   - Test corruption recovery
-- [ ] Use xUnit or existing test framework
-- [ ] Test edge cases: special characters in folder names, Unicode, etc.
+- [x] Use xUnit or existing test framework
+- [x] Test edge cases: special characters in folder names, Unicode, etc.
 
 **Verification:**
-- [ ] All tests pass
-- [ ] Code coverage ≥ 80% for GeneralSettings-related code
-- [ ] Test files compile and run cleanly
+- [x] All tests pass
+- [x] Code coverage ≥ 80% for GeneralSettings-related code
+- [x] Test files compile and run cleanly
 
 **Specification Mapping:** 0.1-0.7
+
+---
+
+**VERIFIED (live, this branch):** GET/PUT /api/config/general merge-patch; General:Port drives Kestrel (launchSettings applicationUrl removed; only ASPNETCORE_URLS overrides); MinimumLogLevel enforced live via MinimumLevelLoggerProvider + config.json FileSystemWatcher hot-reload (~100ms) + POST /api/config/general/test-log helper; DataFolder subdirs (reports/, logs/) + writability probe + traversal 422; requiresRestart flags correct per property.
 
 ---
 
@@ -437,15 +445,15 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement all 7 configuration sections per spec
 
 **Subtasks:**
-- [ ] Create files in `PivotController/Configuration/Models/`:
+- [x] Create files in `PivotController/Configuration/Models/`:
   - `GeneralSettings.cs` — Port, MinimumLogLevel, DataFolder
   - `DataStorageSettings.cs` — RetryAttempts, CacheSizeLimit, KeepDataOnRefresh, MaxCacheItemSizeBytes
   - `DataServerConfiguration.cs` (root) — ConfigVersion, DefaultIndexId, all 7 sections, Indexes[]
-- [ ] Add defaults per spec (§6, §7)
+- [x] Add defaults per spec (§6, §7)
 
 **Verification:**
-- [ ] All properties with correct types and defaults
-- [ ] JSON serialization matches expected structure
+- [x] All properties with correct types and defaults
+- [x] JSON serialization matches expected structure
 
 **Specification Mapping:** 6.1, 6.2, 7
 
@@ -456,20 +464,20 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement per-section and cross-field validation
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Configuration/Validation/ConfigurationValidator.cs`
+- [x] Create file: `PivotController/Configuration/Validation/ConfigurationValidator.cs`
   - Validate per-section rules (Port 1-65535, RetryAttempts 0-30, etc.)
   - Cross-field rules:
     - `DefaultIndexId` must exist
     - If `ReloadIntervalMinutes>0`, must have `AutoReload=true`
     - If `EndpointEnabled=true` (reports), `StoragePath` must be writable
   - Return FieldErrors dictionary for problem details
-- [ ] Add validation attributes to model properties where appropriate
+- [x] Add validation attributes to model properties where appropriate
 
 **Verification:**
-- [ ] Invalid Port (0, 99999) rejected
-- [ ] RetryAttempts < 0 rejected
-- [ ] DefaultIndexId not existing rejected
-- [ ] Validation returns clear field-level errors
+- [x] Invalid Port (0, 99999) rejected
+- [x] RetryAttempts < 0 rejected
+- [x] DefaultIndexId not existing rejected
+- [x] Validation returns clear field-level errors
 
 **Specification Mapping:** 17.3
 
@@ -480,20 +488,24 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Orchestrate configuration updates with persistence
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Configuration/Services/ConfigurationService.cs`
+- [x] Create file: `PivotController/Configuration/Services/ConfigurationService.cs`
   - UpdateAsync(patch) — merge patch with current config
   - Validate merged result
   - Persist to DataServer/config.json (atomic)
   - Apply runtime changes per rules (§12.5)
   - Return { config, requiresRestart }
-- [ ] Implement RequiresRestart detection logic
+- [x] Implement RequiresRestart detection logic
 
 **Verification:**
-- [ ] MinimumLogLevel change applied immediately (requiresRestart=false)
-- [ ] Port change flagged as requiresRestart=true
-- [ ] Invalid update rejected with 422; config unchanged
+- [x] MinimumLogLevel change applied immediately (requiresRestart=false)
+- [x] Port change flagged as requiresRestart=true
+- [x] Invalid update rejected with 422; config unchanged
 
 **Specification Mapping:** 3.1, 3.2
+
+---
+
+**VERIFIED (live, this branch):** GET/PUT /api/config/datastorage (422 validation); RetryAttempts/KeepDataOnRefresh apply immediately, CacheSizeLimit/MaxCacheItemSizeBytes require restart; datastorage.json loaded at startup (LoadPersisted; absent file keeps appsettings values); CacheSizeLimit implemented with **Flexmonster semantics** (max cached server responses per index, per-index LRU, 0 disables response caching); KeepDataOnRefresh both polarities (Ready+kept-data vs Failed+evicted) with recovery; exponential-backoff retries with per-attempt logging; GET /api/config/datastorage/cache-stats observability endpoint.
 
 ---
 

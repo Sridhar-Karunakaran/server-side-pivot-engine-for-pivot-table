@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Pivot Table — Syncfusion Data Server (Server Mode)</title>
+    <link rel="stylesheet" href="https://cdn.syncfusion.com/ej2/24.1.41/material.css" />
+    <script src="https://cdn.syncfusion.com/ej2/24.1.41/dist/ej2.min.js" type="text/javascript"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 24px; background: #fafafa; }
+        h1 { font-size: 22px; font-weight: 600; }
+        p.note { color: #555; max-width: 860px; }
+        .pivot-section { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+                          padding: 14px; margin: 14px 0; }
+        .pivot-section h2 { font-size: 15px; margin: 0 0 10px 0; color: #333; }
+        .pivot-section .meta { font-size: 12px; color: #777; margin-bottom: 8px; }
+        .container { height: 400px; }
+    </style>
+</head>
+<body>
+    <h1>Pivot Table — Server Mode via Syncfusion Data Server</h1>
+    <p class="note">
+        Both grids run in <b>Server mode</b>: pivot calculations, aggregation, filtering and
+        sorting are executed by the Data Server's index-aware pivot engine
+        (<code>/api/pivot/post</code>) — only viewport data is sent to the browser.
+    </p>
+
+    <div class="pivot-section">
+        <h2>Sales Analysis — JSON index</h2>
+        <div class="meta">index: <code>Sales-Json</code> · source: sales-analysis.json</div>
+        <div class="container"><div id="PivotSalesJson" style="width: 100%;"></div></div>
+    </div>
+
+    <div class="pivot-section">
+        <h2>Product Sales — CSV index</h2>
+        <div class="meta">index: <code>Data-Csv</code> · source: data.csv</div>
+        <div class="container"><div id="PivotDataCsv" style="width: 100%;"></div></div>
+    </div>
+
+    <script type="text/javascript">
+        // Each pivot posts to its own URL with an ?index= query (query strings are ignored by
+        // ASP.NET Core routing, so both hit /api/pivot/post). The patch below copies that
+        // index into the JSON body — the Data Server routes per-request on the body field.
+        // This is per-request state on the XHR/fetch call itself: no timing races.
+        (function () {
+            function patchUrlIndex(url) {
+                var m = /[?&]index=([^&]+)/.exec(String(url));
+                return m ? decodeURIComponent(m[1]) : null;
+            }
+            function injectIndex(body, index) {
+                if (!index || typeof body !== 'string' || body.indexOf('dataSourceSettings') === -1) {
+                    return body;
+                }
+                try {
+                    var parsed = JSON.parse(body);
+                    if (parsed && parsed.dataSourceSettings) {
+                        parsed.index = index;
+                        return JSON.stringify(parsed);
+                    }
+                } catch (e) { /* not JSON; leave as-is */ }
+                return body;
+            }
+
+            // XMLHttpRequest (EJ2 pivot engine transport)
+            var realOpen = XMLHttpRequest.prototype.open;
+            var realSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (method, url) {
+                this._pivotIndex = String(url).indexOf('/api/pivot/post') > -1 ? patchUrlIndex(url) : null;
+                return realOpen.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function (body) {
+                if (this._pivotIndex && body) {
+                    arguments[0] = injectIndex(body, this._pivotIndex);
+                }
+                return realSend.apply(this, arguments);
+            };
+
+            // fetch (in case the transport version uses it)
+            var realFetch = window.fetch;
+            if (realFetch) {
+                window.fetch = function (input, init) {
+                    var url = typeof input === 'string' ? input : (input && input.url) || '';
+                    if (String(url).indexOf('/api/pivot/post') > -1 && init && init.body) {
+                        var index = patchUrlIndex(url);
+                        if (index && typeof init.body === 'string') {
+                            init = Object.assign({}, init, { body: injectIndex(init.body, index) });
+                        }
+                    }
+                    return realFetch.apply(this, arguments);
+                };
+            }
+        })();
+
+        function createPivot(indexName, settings) {
+            settings.url = window.location.origin + '/api/pivot/post?index=' + encodeURIComponent(indexName);
+            settings.mode = 'Server';
+            settings.enableSorting = true;
+            settings.expandAll = false;
+            new ej.pivotview.PivotView({
+                dataSourceSettings: settings,
+                enableVirtualization: true,
+                enableValueSorting: true,
+                showGroupingBar: true,
+                showFieldList: true,
+                height: 400,
+                width: '100%'
+            }).appendTo(settings._elementId);
+        }
+
+        // Sales-Json index (JSON source)
+        createPivot('Sales-Json', {
+            _elementId: '#PivotSalesJson',
+            type: 'JSON',
+            rows: [{ name: 'Sector', caption: 'Sector' }],
+            columns: [{ name: 'EnerType', caption: 'Energy Type' }],
+            values: [
+                { name: 'PowUnits', caption: 'Power Units' },
+                { name: 'ProCost', caption: 'Cost' }
+            ]
+        });
+
+        // Data-Csv index (CSV source)
+        createPivot('Data-Csv', {
+            _elementId: '#PivotDataCsv',
+            type: 'JSON',
+            rows: [{ name: 'Country', caption: 'Country' }],
+            columns: [{ name: 'Category', caption: 'Category' }],
+            values: [
+                { name: 'Price', caption: 'Price' },
+                { name: 'Quantity', caption: 'Quantity' }
+            ]
+        });
+    </script>
+</body>
+</html>

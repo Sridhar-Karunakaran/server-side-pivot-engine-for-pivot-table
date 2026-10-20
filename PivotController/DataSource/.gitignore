@@ -1,0 +1,4 @@
+config.json
+indexes.json
+datastorage.json
+*.corrupt.*
