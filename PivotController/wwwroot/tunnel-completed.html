@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Pivot Table — Data Server (Completed Step 4 Tunnel Sample)</title>
+    <!-- inline favicon: avoids the default /favicon.ico 404 -->
+    <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==" />
+    <!-- Latest EJ2 packages -->
+    <link rel="stylesheet" href="https://cdn.syncfusion.com/ej2/35.1.37/material.css" />
+    <script src="https://cdn.syncfusion.com/ej2/35.1.37/dist/ej2.min.js" type="text/javascript"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 24px; background: #fafafa; }
+        h1 { font-size: 20px; font-weight: 600; }
+        p.note { font-size: 13px; color: #555; max-width: 900px; }
+        .status { font-size: 13px; color: #1b5e20; background: #e8f5e9; border: 1px solid #a5d6a7;
+                  border-radius: 6px; padding: 8px 12px; margin: 10px 0; }
+        .pivot-section { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+                         padding: 14px; margin: 14px 0; }
+        .pivot-section h2 { font-size: 15px; margin: 0 0 6px 0; color: #333; }
+        .pivot-section .meta { font-size: 12px; color: #777; margin-bottom: 8px; }
+        /* Explicit dimensions BEFORE first render — avoids the offsetWidth-null
+           layout-refresh race when the grid renders before styles settle. */
+        .pivot-section .grid { height: 420px; }
+        .pivot-section .grid > div { width: 100%; }
+    </style>
+</head>
+<body>
+    <h1>Pivot Table — Data Server (Completed Step 4)</h1>
+    <p class="note">
+        Both grids run in <b>Server mode</b>: all aggregation, filtering and sorting execute in the
+        Data Server's index-aware pivot engine (<code>POST /api/pivot/post</code>) — only viewport
+        data reaches the browser. HTTPS is served from <code>appsettings.json</code>
+        (<code>Https:PfxPath</code> / <code>Https:PemCertPath</code>+<code>PemKeyPath</code> /
+        <code>Https:Thumbprint</code>|<code>SubjectName</code> for the Windows store).
+    </p>
+    <div class="status" id="Status">Connecting…</div>
+
+    <div class="pivot-section">
+        <h2>Sales Analysis — JSON index</h2>
+        <div class="meta">index: <code>Sales-Json</code> · source: sales-analysis.json</div>
+        <div class="grid"><div id="PivotSalesJson"></div></div>
+    </div>
+
+    <div class="pivot-section">
+        <h2>Product Sales — CSV index</h2>
+        <div class="meta">index: <code>Data-Csv</code> · source: data.csv</div>
+        <div class="grid"><div id="PivotDataCsv"></div></div>
+    </div>
+
+    <script type="text/javascript">
+        (function () {
+            // Same-origin endpoint: the page is served BY the Data Server, so its own
+            // protocol/host point straight back at the certified API. No hard-coded host —
+            // works through any tunnel/proxy unchanged.
+            var endpoint = window.location.protocol + '//' + window.location.host + '/api/pivot/post';
+            var secured = window.location.protocol === 'https:';
+            document.getElementById('Status').innerHTML =
+                (secured ? '✅ Connected over TLS — ' : '⚠ Connected over plain HTTP — ') +
+                '<code>' + endpoint + '</code>';
+
+            // Per-request index routing: copy the ?index= query into the POST body (the
+            // Data Server routes each pivot request by the body field). Same transport
+            // patch as the other tunnel samples.
+            function injectIndex(body, index) {
+                try {
+                    var parsed = JSON.parse(body);
+                    if (parsed && parsed.dataSourceSettings) {
+                        parsed.index = index;
+                        return JSON.stringify(parsed);
+                    }
+                } catch (e) { /* not JSON; leave as-is */ }
+                return body;
+            }
+            function patchUrlIndex(url) {
+                var m = /[?&]index=([^&]+)/.exec(String(url));
+                return m ? decodeURIComponent(m[1]) : null;
+            }
+            var realOpen = XMLHttpRequest.prototype.open;
+            var realSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (method, url) {
+                this._pivotIndex = String(url).indexOf('/api/pivot/post') > -1 ? patchUrlIndex(url) : null;
+                return realOpen.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function (body) {
+                if (this._pivotIndex && body) {
+                    arguments[0] = injectIndex(body, this._pivotIndex);
+                }
+                return realSend.apply(this, arguments);
+            };
+
+            // Empty field ARRAYS (not omitted): EJ2 Server mode iterates
+            // rows/columns/values/filters internally — omitted arrays crash on 'sort'.
+            function mount(id, index) {
+                var pivotGridObj = new ej.pivotview.PivotView({
+                    dataSourceSettings: {
+                        url: endpoint + '?index=' + encodeURIComponent(index),
+                        mode: 'Server',
+                        type: index === 'Data-Csv' ? 'CSV' : 'JSON',
+                        expandAll: false,
+                        rows: [],
+                        columns: [],
+                        values: [],
+                        filters: []
+                    },
+                    showGroupingBar: true,
+                    showFieldList: true,
+                    enableVirtualization: true,
+                    enableValueSorting: true,
+                    height: '420px',
+                    width: '100%'
+                });
+                pivotGridObj.appendTo('#' + id);
+            }
+
+            // DOM-ready render: container dimensions are settled before first layout.
+            function render() {
+                mount('PivotSalesJson', 'Sales-Json');
+                mount('PivotDataCsv', 'Data-Csv');
+            }
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', render);
+            } else {
+                render();
+            }
+        })();
+    </script>
+</body>
+</html>
