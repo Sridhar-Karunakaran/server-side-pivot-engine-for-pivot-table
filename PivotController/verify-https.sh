@@ -76,7 +76,7 @@ cp "$APPSETTINGS" "$APPSETTINGS.bak"
 echo
 echo "=== 1. HTTPS ENABLED VIA appsettings.json (PEM source, §4.2.3) ==="
 rm -f "$HTTPS_JSON"   # persisted file overrides appsettings — start clean
-set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"Protocols\": \"HTTP1_AND_HTTP2\"}"
+set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"AllowInvalidCertificates\": true, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
 start_server && ok "server restarted with HTTPS listener (https://0.0.0.0:$PORT)" || { bad "server failed to start"; tail -20 /tmp/verify-https-server.log; exit 1; }
 
 echo "-- GET /api/config/https (§4.5.1):"
@@ -124,7 +124,7 @@ echo
 echo "=== 4. PFX CERTIFICATE SOURCE VIA appsettings.json (§4.2.2) + PASSWORD SECRECY ==="
 echo "-- PFX password is memory-only: it must come from appsettings.json to survive a restart."
 rm -f "$HTTPS_JSON"
-set_appsettings_https "{\"Enabled\": true, \"PfxPath\": \"$CERT_PFX\", \"PfxPassword\": \"test123\", \"Protocols\": \"HTTP1_AND_HTTP2\"}"
+set_appsettings_https "{\"Enabled\": true, \"PfxPath\": \"$CERT_PFX\", \"PfxPassword\": \"test123\", \"AllowInvalidCertificates\": true, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
 start_server && ok "server restarted with PFX source (password from appsettings)" || bad "PFX restart failed"
 C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" "$HS")
 [ "$C" = "200" ] && ok "HTTPS listener active with PFX certificate" || bad "PFX HTTPS -> $C"
@@ -153,8 +153,32 @@ grep -qi "starting HTTP-only" /tmp/verify-https-server.log && ok "clear fallback
 curl "${curl_flags[@]}" -o /dev/null --connect-timeout 3 "$HS" 2>/dev/null && bad "HTTPS still active after password loss" || ok "no HTTPS listener in fallback mode"
 
 echo
-echo "=== 6. VALIDATION (§4.1/§4.4) — 422 cases (live server, HTTPS active again) ==="
-set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"Protocols\": \"HTTP1_AND_HTTP2\"}"
+echo "=== 6. ALLOW INVALID CERTIFICATES POLICY (§4.4) — self-signed (untrusted) cert ==="
+echo "-- AllowInvalidCertificates=false (default): self-signed cert must be REJECTED,"
+echo "   server degrades to HTTP-only (clients would see net::ERR_CERT_AUTHORITY_INVALID):"
+rm -f "$HTTPS_JSON"
+set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"AllowInvalidCertificates\": false, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
+start_server
+C=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/api/config/https")
+[ "$C" = "200" ] && ok "startup degrades to HTTP (policy rejected untrusted cert)" || bad "policy-reject fallback -> $C"
+grep -qi "AllowInvalidCertificates" /tmp/verify-https-server.log && ok "policy rejection message logged" || bad "no policy message in log"
+curl "${curl_flags[@]}" -o /dev/null --connect-timeout 3 "$HS" 2>/dev/null && bad "HTTPS served despite AllowInvalidCertificates=false" || ok "no HTTPS listener when policy rejects cert"
+echo "-- PUT with invalid cert + AllowInvalidCertificates=false -> 422 (validated at API time):"
+C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "http://localhost:$PORT/api/config/https" -H 'Content-Type: application/json' \
+  -d "{\"enabled\":true,\"pemCertPath\":\"$CERT\",\"pemKeyPath\":\"$KEY\",\"allowInvalidCertificates\":false}")
+[ "$C" = "422" ] && ok "PUT invalid cert with policy=false -> 422" || bad "PUT policy=false -> $C"
+echo "-- AllowInvalidCertificates=true (Development): self-signed cert served for local testing:"
+rm -f "$HTTPS_JSON"
+set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"AllowInvalidCertificates\": true, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
+start_server
+C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" "$HS")
+[ "$C" = "200" ] && ok "HTTPS listener active with AllowInvalidCertificates=true" || bad "allow-invalid HTTPS -> $C"
+GOT_CN=$(echo | openssl s_client -connect "localhost:$PORT" 2>/dev/null | openssl x509 -noout -subject 2>/dev/null)
+echo "$GOT_CN" | grep -q "CN *= *localhost" && ok "self-signed cert served (explicitly allowed)" || bad "unexpected cert"
+
+echo
+echo "=== 7. VALIDATION (§4.1/§4.4) — 422 cases (live server, HTTPS active again) ==="
+set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"AllowInvalidCertificates\": true, \"Protocols\": \"HTTP1_AND_HTTP2\"}"
 rm -f "$HTTPS_JSON"
 start_server && ok "server back on HTTPS (PEM) for validation tests" || bad "restart failed"
 C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Content-Type: application/json' \
@@ -171,13 +195,13 @@ C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" -X PUT "$HS" -H 'Cont
 [ "$C" = "422" ] && ok "store thumbprint on non-Windows -> 422" || bad "store lookup -> $C"
 
 echo
-echo "=== 7. MERGE-PATCH SEMANTICS (§4.5.2) ==="
+echo "=== 8. MERGE-PATCH SEMANTICS (§4.5.2) ==="
 curl "${curl_flags[@]}" -X PUT "$HS" -H 'Content-Type: application/json' -d '{"protocols":"HTTP1_AND_HTTP2"}' -o /dev/null
 GET=$(curl "${curl_flags[@]}" "$HS")
 echo "$GET" | grep -q '"enabled": *true' && ok "partial patch keeps enabled=true" || bad "partial patch reset enabled!"
 
 echo
-echo "=== 8. HTTPS DISABLED VIA appsettings.json (§4.2.1) ==="
+echo "=== 9. HTTPS DISABLED VIA appsettings.json (§4.2.1) ==="
 rm -f "$HTTPS_JSON"
 set_appsettings_https "{\"Enabled\": false}"
 start_server && ok "server restarted HTTP-only (http://0.0.0.0:$PORT)" || bad "HTTP-only restart failed"

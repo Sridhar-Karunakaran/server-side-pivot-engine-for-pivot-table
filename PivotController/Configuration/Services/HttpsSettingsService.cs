@@ -74,6 +74,16 @@ namespace PivotController.Configuration.Services
                 {
                     errors.Add("AllowInvalidCertificates forbidden in Production");
                 }
+                // Spec §4.4: when invalid certs are NOT allowed, reject a certificate that
+                // clients would refuse (untrusted/self-signed → net::ERR_CERT_AUTHORITY_INVALID)
+                // instead of persisting it and degrading on the next restart.
+                // The unsanitized candidate carries the live PFX password for this check only.
+                if (errors.Count == 0 && candidate.Enabled)
+                {
+                    var candidateWithSecrets = candidate;
+                    if (pfxPassword != null) candidateWithSecrets.PfxPassword = Normalize(pfxPassword);
+                    errors.AddRange(_certificates.TryResolveValidatedCertificate(candidateWithSecrets).Errors);
+                }
                 if (errors.Count > 0)
                 {
                     return (Current, false, errors);

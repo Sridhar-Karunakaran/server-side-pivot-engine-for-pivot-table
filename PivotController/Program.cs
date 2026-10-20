@@ -112,15 +112,23 @@ if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
     System.Security.Cryptography.X509Certificates.X509Certificate2? httpsCertificate = null;
     if (httpsSettings.Enabled)
     {
-        try
+        // Chain-validate the certificate against the AllowInvalidCertificates policy (spec §4.4):
+        // when invalid certs are NOT allowed, a self-signed/untrusted certificate (the browser's
+        // net::ERR_CERT_AUTHORITY_INVALID) is rejected and startup degrades to HTTP-only.
+        var (cert, certErrors) = certificateService.TryResolveValidatedCertificate(httpsSettings);
+        if (certErrors.Count > 0)
         {
-            httpsCertificate = certificateService.ResolveCertificate(httpsSettings);
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine("HTTPS certificate could not be loaded; starting HTTP-only. " + ex.Message);
+            Console.Error.WriteLine("HTTPS certificate could not be used; starting HTTP-only.");
+            foreach (var err in certErrors)
+            {
+                Console.Error.WriteLine("  " + err);
+            }
             Console.Error.WriteLine("Fix Https settings (appsettings.json Https:* or PUT /api/config/https) and restart.");
             httpsSettings.Enabled = false;
+        }
+        else
+        {
+            httpsCertificate = cert;
         }
     }
     if (httpsSettings.Enabled && httpsCertificate is not null)

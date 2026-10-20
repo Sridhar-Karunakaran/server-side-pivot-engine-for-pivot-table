@@ -17,6 +17,49 @@ namespace PivotController.Configuration.Services
             _logger = logger;
         }
 
+        /// <summary>
+        /// Validates a loaded certificate against the AllowInvalidCertificates policy (spec §4.4).
+        /// When invalid certs are NOT allowed (default), the server must not serve a certificate
+        /// that clients will reject (ERR_CERT_AUTHORITY_INVALID for self-signed/untrusted chains):
+        /// build the chain locally and require a trusted root + a server-capable leaf with
+        /// usable private key and valid time window. Returns error list; empty = certificate is
+        /// acceptable to serve.
+        /// </summary>
+        public List<string> ValidateCertificateChain(X509Certificate2 cert)
+        {
+            var errors = new List<string>();
+            using var chain = new X509Chain();
+            // Do not hide problems from custom/partial trust stores; use default policy.
+            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck; // offline machines cannot reach CRL/OCSP
+            if (!chain.Build(cert))
+            {
+                foreach (var status in chain.ChainStatus)
+                {
+                    errors.Add($"Certificate chain not trusted: {status.StatusInformation.Trim()}");
+                }
+                if (errors.Count == 0)
+                {
+                    errors.Add("Certificate chain could not be validated (untrusted root or self-signed).");
+                }
+                return errors;
+            }
+            if (!cert.HasPrivateKey)
+            {
+                errors.Add("Certificate has no private key (cannot serve TLS).");
+            }
+            if (!cert.NotBefore.ToLocalTime().Equals(cert.NotBefore) || cert.NotAfter < DateTime.Now)
+            {
+                errors.Add($"Certificate expired on {cert.NotAfter:u}.");
+            }
+            return errors;
+        }
+
+        /// <summary>
+        /// True when the configured certificate policy permits serving a certificate that
+        /// fails chain validation (AllowInvalidCertificates=true, Development only, spec §4.4).
+        /// </summary>
+        public bool AllowsInvalid(HttpsSettings settings) => settings.AllowInvalidCertificates;
+
         /// <summary>Validates settings without loading (for PUT-time checks). Empty list = valid.</summary>
         public List<string> Validate(HttpsSettings settings)
         {
@@ -99,10 +142,65 @@ namespace PivotController.Configuration.Services
                 {
                     throw new InvalidOperationException($"Certificate with thumbprint '{settings.Thumbprint}' not found in store {storeLocation}/{settings.StoreName}.");
                 }
+                // Multiple matches with the same thumbprint are impossible (hash collision);
+                // pick the first entry that actually has a usable private key.
+                X509Certificate2? candidate = null;
+                foreach (var c in found)
+                {
+                    if (c.HasPrivateKey) { candidate = c; break; }
+                }
+                if (candidate is null)
+                {
+                    throw new InvalidOperationException(
+                        $"Certificate '{settings.Thumbprint}' in store {storeLocation}/{settings.StoreName} has no private key and cannot serve TLS. " +
+                        "Import the certificate with its private key (and mark it exportable if needed).");
+                }
                 _logger.LogInformation("HTTPS certificate loaded from Windows store {Location}/{Store} by thumbprint.", storeLocation, settings.StoreName);
-                return found[0];
+                return candidate;
             }
             throw new InvalidOperationException("HTTPS enabled but no certificate source configured.");
+        }
+
+        /// <summary>
+        /// Resolves the certificate AND enforces the AllowInvalidCertificates policy (spec §4.4):
+        /// when invalid certificates are not allowed, a certificate that fails chain validation
+        /// (self-signed / untrusted root — the browser's ERR_CERT_AUTHORITY_INVALID) is rejected
+        /// with a clear error instead of being served. Callers that must not crash (startup) use
+        /// <see cref="TryResolveValidCertificate"/> instead.
+        /// </summary>
+        public X509Certificate2? ResolveValidatedCertificate(HttpsSettings settings)
+        {
+            var cert = ResolveCertificate(settings);
+            if (cert is null) return null;
+            if (AllowsInvalid(settings)) return cert;
+            var chainErrors = ValidateCertificateChain(cert);
+            if (chainErrors.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "Configured HTTPS certificate is invalid/untrusted and AllowInvalidCertificates=false: " +
+                    string.Join(" ", chainErrors) +
+                    " Clients would reject it (net::ERR_CERT_AUTHORITY_INVALID). " +
+                    "Use a certificate chained to a trusted root, or set Https:AllowInvalidCertificates=true in Development.");
+            }
+            return cert;
+        }
+
+        /// <summary>
+        /// Non-throwing variant for startup: returns (cert, errors). When the policy forbids
+        /// invalid certificates and the resolved certificate fails chain validation, cert is
+        /// null and errors explain why (caller logs + degrades to HTTP instead of crashing).
+        /// </summary>
+        public (X509Certificate2? Certificate, List<string> Errors) TryResolveValidatedCertificate(HttpsSettings settings)
+        {
+            try
+            {
+                var cert = ResolveValidatedCertificate(settings);
+                return (cert, new List<string>());
+            }
+            catch (Exception ex)
+            {
+                return (null, new List<string> { ex.Message });
+            }
         }
 
         /// <summary>Maps Protocols option onto Kestrel's HttpProtocols enum.</summary>
