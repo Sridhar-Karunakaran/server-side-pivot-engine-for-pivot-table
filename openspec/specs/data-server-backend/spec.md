@@ -42,7 +42,7 @@
 
 ---
 
-## 0. Index Configuration (STEP 1 - FOUNDATIONAL)
+## 0. Index Configuration (STEP 1 - FOUNDATIONAL) (IMPLEMENTED & VERIFIED)
 
 **Critical:** This is the first implementation step. All other features depend on named indexes and IndexManager.
 
@@ -127,8 +127,9 @@ public class IndexStatusResponse
 **TESTING NOTE (Phase 1 Verification):** For initial testing, declare the index name **directly in the controller** to verify indexing works before implementing client-side integration (Step 8).
 
 **SHALL** route pivot requests to the correct index based on index name.
+Implemented precedence: request body `index` field → `?index=` query parameter (added for browser-side pivot grids whose URL can carry the index) → controller constant `ServerIndexName` (`"Sales-Json"`). Step 8 will additionally honor client-sent report metadata.
 
-**Scenario 0.3.1: Controller-Side Index Declaration (Testing Phase)**
+**Scenario 0.3.1: Controller-Side Index Declaration (Testing Phase) — IMPLEMENTED**
 - Given: Multiple indexes exist (Sales-Data, Sales-Db)
 - When: Controller code declares: `const string indexName = "Sales-Data";`
 - And: Pivot request sent to `/api/pivot/post`
@@ -313,9 +314,10 @@ public class IndexStatusResponse
 - When: `POST /api/indexes { index: "sales-data" }` (different case)
 - Then: Returns 409 "Index already exists"
 
-### 0.6 CSV Separator Configuration
+### 0.6 CSV Separator Configuration (IMPLEMENTED — enum-typed separators)
 
-**SHALL** honor CSV delimiter, decimal separator, and thousands separator on load.
+**SHALL** honor CSV delimiter (free string, default `","`), decimal separator, and thousands separator on load.
+Implemented types: `CsvDecimalSeparator ∈ { Comma, Dot }`, `CsvThousandsSeparator ∈ { Comma, Dot, Space }` — enums accepting both names (`"Comma"`) and raw symbols (`","`, `"."`, `" "`) in appsettings.json (TypeConverter), API bodies, and `indexes.json`. Numeric autodetection honors the configured separators, including the ambiguous case where the decimal and thousands symbols coincide.
 
 **Scenario 0.6.1: European Format CSV**
 - Given: CSV with semicolon delimiter, comma as decimal
@@ -329,9 +331,10 @@ public class IndexStatusResponse
 - Then: Data reloaded with pipe delimiter
 - And: Field count and values correct
 
-### 0.7 Field Mapping (Type Inference)
+### 0.7 Field Mapping (Type Inference) (IMPLEMENTED)
 
 **SHALL** support optional per-field type mapping (Number, String, Date); disabled by default (autodetect).
+Implemented endpoints: `GET /api/indexes/{index}/fields` (list with `detectedType`/`mappedType`/`effectiveType`), `PUT /api/indexes/{index}/fields/{fieldName}` body `{"type":"Number|String|Date"}`, `DELETE /api/indexes/{index}/fields/{fieldName}` (falls back to detected). Mappings apply to pivot requests immediately (injected into `CustomProperties.FieldType` + `DataSourceSettings.FieldMapping`), evicting that index's engine cache; they also gate CSV value conversion. `MappingEnabled` is `bool?` so a PUT can explicitly disable it.
 
 **Scenario 0.7.1: Mapping Disabled (Autodetect)**
 - Given: CSV with mixed types
@@ -387,7 +390,7 @@ public class IndexStatusResponse
 
 ---
 
-## 1. General Settings Configuration (STEP 2)
+## 1. General Settings Configuration (STEP 2) (IMPLEMENTED & VERIFIED)
 
 **Follows after Index Configuration. All indexes must be functional before general settings.**
 
@@ -404,9 +407,10 @@ public class GeneralSettings
 }
 ```
 
-### 1.2 Port Configuration
+### 1.2 Port Configuration (IMPLEMENTED)
 
 **SHALL** accept valid port numbers (1–65535) and bind the Kestrel listener.
+Precedence (implemented): `ASPNETCORE_URLS` env var > `General:Port` (appsettings.json). The launchSettings `applicationUrl` was removed so `General:Port` drives local `dotnet run` / F5; a persisted `config.json` General section (written via `PUT`) is loaded at startup and also applies.
 
 | Property | Default | Validation | Requires Restart |
 |----------|---------|------------|:---:|
@@ -439,9 +443,10 @@ public class GeneralSettings
 - Then: Startup fails with error "Address already in use"
 - And: Exit code non-zero
 
-### 1.3 Minimum Log Level Configuration
+### 1.3 Minimum Log Level Configuration (IMPLEMENTED)
 
 **SHALL** accept Info, Warn, Error, or Fatal and apply immediately (no restart).
+Implementation: `MinimumLevelLoggerProvider` is the sole console logging provider (default providers cleared); `GeneralSettingsService.ApplyLogLevel()` flips its threshold at runtime, and `GeneralSettingsFileWatcher` (FileSystemWatcher on `{DataFolder}/config.json`) hot-reloads external edits within ~100ms. A `POST /api/config/general/test-log` helper emits one entry per severity for local verification.
 
 | Property | Default | Validation | Requires Restart |
 |----------|---------|------------|:---:|
@@ -516,7 +521,7 @@ public class GeneralSettings
 - Then: Returns 200 with `requiresRestart: true`
 - And: New folder not used until restart
 
-### 1.5 General Settings API
+### 1.5 General Settings API (IMPLEMENTED — GET/PUT /api/config/general, merge-patch; only supplied properties change; response includes `requiresRestart`)
 
 **Scenario 1.5.1: Get General Settings**
 - Given: Server running
@@ -537,11 +542,11 @@ public class GeneralSettings
 
 ---
 
-## 2. Data Storage Settings Configuration (STEP 3)
+## 2. Data Storage Settings Configuration (STEP 3) (IMPLEMENTED & VERIFIED)
 
 **Follows General Settings. Manages caching and retry behavior.**
 
-### 2.1 Configuration Model
+### 2.1 Configuration Model (IMPLEMENTED — bound from `DataStorage` in appsettings.json)
 
 ```csharp
 public class DataStorageSettings
@@ -580,31 +585,38 @@ public class DataStorageSettings
 - Then: Returns 200, applied immediately
 - And: Next load uses value 5
 
-### 2.3 Cache Size Limit Configuration
+### 2.3 Cache Size Limit Configuration (IMPLEMENTED — Flexmonster semantics)
 
-**SHALL** enforce the maximum number of cached server responses **per index** (Flexmonster Data Server semantics; see implementation deltas above).
+**SHALL** enforce the maximum number of cached **server responses for every index** (Flexmonster Data Server semantics). A "response" is the computed pivot-engine result for one report (the report's rows/columns/values/filters hash to the cache key `engine:{index}:{hash}`). The limit applies **per index, independently**: exceeding it evicts that index's least-recently-used response only, never touching another index's entries. The per-index dataset cache (`data:{index}`) is NOT subject to this limit (it stays warm to back KeepDataOnRefresh and fast rebuilds).
 
 **Scenario 2.3.1: Default Cache Limit**
 - Given: `cacheSizeLimit: 100` (default)
-- When: Up to 100 indexes loaded
-- Then: All cached
+- When: Up to 100 distinct reports requested against one index
+- Then: All responses cached for that index
 
-**Scenario 2.3.2: Cache Limit Exceeded (LRU Eviction)**
-- Given: `cacheSizeLimit: 5`, 5 indexes cached
-- When: 6th index loaded
-- Then: Least-recently-used evicted
-- And: 6th index cached
+**Scenario 2.3.2: Cache Limit Exceeded (Per-Index LRU Eviction)**
+- Given: `cacheSizeLimit: 3`, 3 responses cached for `Sales-Json`
+- When: 4th distinct report requested against `Sales-Json`
+- Then: That index's least-recently-used response is evicted
+- And: The 4th response is cached (count stays 3 for `Sales-Json`)
+- And: Other indexes' cached responses are unaffected
+- And: A pivot requesting an evicted response still returns 200 (transparent rebuild, ~5–50 ms from the warm dataset)
 
 **Scenario 2.3.3: Cache Disabled**
 - Given: `cacheSizeLimit: 0`
-- When: Index loaded
-- Then: Not cached
-- And: Every request reloads data
+- When: Any pivot request served
+- Then: No engine responses cached (cache-stats reports 0 responses)
+- And: Every request rebuilds from the per-index dataset
 
 **Scenario 2.3.4: Update Cache Limit Requires Restart**
 - Given: Current `cacheSizeLimit: 100`
 - When: `PUT /api/config/datastorage { cacheSizeLimit: 50 }`
 - Then: Returns 200 with `requiresRestart: true`
+- And: The value persists to `datastorage.json` and loads on next startup
+
+**Scenario 2.3.5: Observability (implemented)**
+- When: `GET /api/config/datastorage/cache-stats`
+- Then: Returns 200 with `cacheSizeLimit`, `cachedCount`, `cachedIndexes` (per-index response counts) and `evictedIndexes`
 
 ### 2.4 Keep Data on Refresh Configuration
 
@@ -630,9 +642,9 @@ public class DataStorageSettings
 - When: `PUT /api/config/datastorage { keepDataOnRefresh: false }`
 - Then: Returns 200, applied immediately
 
-### 2.5 Max Cache Item Size Configuration
+### 2.5 Max Cache Item Size Configuration (IMPLEMENTED)
 
-**SHALL** enforce maximum per-index cache entry size.
+**SHALL** enforce maximum size of the cached **dataset** entry (`data:{index}`), estimated in memory. Enforcement requires `CacheSizeLimit > 0` and `MaxCacheItemSizeBytes > 0`; an oversize dataset is not cached (loaded per request, with a warning log).
 
 **Scenario 2.5.1: Unlimited Item Size**
 - Given: `maxCacheItemSizeBytes: 0` (unlimited)
@@ -1076,13 +1088,13 @@ var pivotGridObj = new ej.pivotview.PivotView({
 
 | Setting | Rule | Error |
 |---------|------|-------|
-| Port | 1–65535 | 422 if out of range |
-| MinimumLogLevel | Info/Warn/Error/Fatal | 422 if invalid |
-| DataFolder | non-empty, writable | 422 if invalid, Fatal if not writable at startup |
-| RetryAttempts | 0–30 | 422 if out of range |
-| CacheSizeLimit | >= 0 | 422 if negative |
-| KeepDataOnRefresh | bool | — |
-| MaxCacheItemSizeBytes | >= 0 | 422 if negative |
+| Port | 1–65535 | 422 if out of range | ✅ implemented |
+| MinimumLogLevel | Info/Warn/Error/Fatal | 422 if invalid | ✅ implemented |
+| DataFolder | non-empty, writable, no path traversal | 422 if invalid, Fatal if not writable at startup | ✅ implemented |
+| RetryAttempts | 0–30 | 422 if out of range | ✅ implemented |
+| CacheSizeLimit | >= 0 (0 disables response caching; per-index LRU) | 422 if negative | ✅ implemented |
+| KeepDataOnRefresh | bool | — | ✅ implemented |
+| MaxCacheItemSizeBytes | >= 0 (0 = unlimited; applies when CacheSizeLimit > 0) | 422 if negative | ✅ implemented |
 | CommandTimeoutEnabled | bool | — |
 | CommandTimeLimit | >= 0 | 422 if negative |
 | Https.Enabled | bool | 422 if no cert source configured |
