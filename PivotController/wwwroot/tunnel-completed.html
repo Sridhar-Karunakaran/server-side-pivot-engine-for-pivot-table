@@ -90,16 +90,16 @@
 
             // Empty field ARRAYS (not omitted): EJ2 Server mode iterates
             // rows/columns/values/filters internally — omitted arrays crash on 'sort'.
-            function mount(id, index) {
+            function mount(id, index, rowField, valueField) {
                 var pivotGridObj = new ej.pivotview.PivotView({
                     dataSourceSettings: {
                         url: endpoint + '?index=' + encodeURIComponent(index),
                         mode: 'Server',
                         type: index === 'Data-Csv' ? 'CSV' : 'JSON',
                         expandAll: false,
-                        rows: [],
+                        rows: [{ name: rowField, caption: rowField }],
                         columns: [],
-                        values: [],
+                        values: [{ name: valueField, caption: valueField }],
                         filters: []
                     },
                     showGroupingBar: true,
@@ -113,9 +113,11 @@
             }
 
             // DOM-ready render: container dimensions are settled before first layout.
+            // Sales-Json index: Sector on rows, ProCost on values.
+            // Data-Csv index: same axes where the field exists (fallback to first row/value otherwise).
             function render() {
-                mount('PivotSalesJson', 'Sales-Json');
-                mount('PivotDataCsv', 'Data-Csv');
+                mount('PivotSalesJson', 'Sales-Json', 'Sector', 'ProCost');
+                mount('PivotDataCsv', 'Data-Csv', 'Sector', 'ProCost');
             }
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', render);
