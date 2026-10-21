@@ -17,7 +17,7 @@
 | 3 | §2 Data Storage Settings | ✅ Implemented & verified | CacheSizeLimit aligned with Flexmonster semantics; see deltas below |
 | 4 | §4 HTTPS Settings | ✅ COMPLETE | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; merge-patch API; https.json precedence hardened; test PKI (Cert/PEM-Cert/); verify-https.sh 33 checks |
 | 5 | §5 Security Settings | ✅ Implemented & verified (COMPLETE) | Basic Auth (Authorization.Enabled + Data Server credentials) + CORS (AllowOrigin; specific origins required when auth enabled, never '*', fail-fast at startup, 422 via API); see deltas below |
-| 6 | §6 Report Sharing | ⬜ Not started | Report storage/expiration/quota |
+| 6 | §6 Report Sharing | 🔄 In progress | Report storage/expiration/quota — `ReportSharingOptions` appsettings + `reportsharing.json` persistence |
 | 7 | §3 Database Query | ⬜ Not started | SQLite-only provider (mandatory); future providers incremental |
 | 8 | §7 Client-Side Integration | ⬜ Not started | Sample sends index via `?index=` query |
 
@@ -1063,38 +1063,49 @@ requests.
 
 ## 6. Report Sharing Settings Configuration (STEP 6)
 
-### 6.1 Configuration Model
+### 6.1 Configuration Model (appsettings.json `ReportSharingOptions`)
 
-```csharp
-public class ReportSharingSettings
+```json
 {
-    public bool EndpointEnabled { get; set; } = false;
-    public string StoragePath { get; set; } = "DataServer/reports";
-    public int ReportExpirationTimeMinutes { get; set; } = 0;  // 0 = permanent
-    public int MaxFolderSizeMB { get; set; } = 0;               // 0 = unlimited
-    public bool AutoDelete { get; set; } = false;
+  "ReportSharingOptions": {
+    "EndpointEnabled": false,
+    "PathToFolder": "DataServer/reports",
+    "ReportExpirationTime": 0,
+    "MaxSizeOfFolder": 0,
+    "AutoDeletingEnabled": false
+  }
 }
 ```
+
+- `EndpointEnabled` — enables/disables the report sharing endpoint (default disabled).
+- `PathToFolder` — report storage folder. Relative paths resolve against `{DataFolder}`; absolute paths allowed. Path traversal (e.g. `../../`) → 422 (startup fail). Changing requires restart.
+- `ReportExpirationTime` — minutes; 0 = reports never expire.
+- `MaxSizeOfFolder` — MB; 0 = unlimited storage.
+- `AutoDeletingEnabled` — governs ONLY quota eviction (oldest-report removal when `MaxSizeOfFolder` is reached); it does NOT control expiration cleanup.
 
 ### 6.2 Endpoint Enable/Disable
 
 **Scenario 6.2.1: Endpoint Disabled (Default)**
-- Given: `endpointEnabled: false`
-- When: `POST /api/reportsharing/reports { ... }`
+- Given: `EndpointEnabled: false`
+- When: any `/api/reportsharing/*` report request (`POST`/`GET`/`DELETE`)
 - Then: Returns 404 "Report sharing disabled"
+- And: `GET /api/config/reportsharing` still returns the settings (config API always available)
 
 **Scenario 6.2.2: Enable Endpoint**
-- Given: `endpointEnabled: false`
-- When: `PUT /api/config/reportsharing { endpointEnabled: true }`
-- Then: Returns 200, applied immediately
+- Given: `EndpointEnabled: false`
+- When: `PUT /api/config/reportsharing { "endpointEnabled": true }`
+- Then: Returns 200, applied immediately (no restart)
 - And: Report endpoints now work
 
 ### 6.3 Report Lifecycle
 
 **Scenario 6.3.1: Save Report**
 - Given: Endpoint enabled
-- When: `POST /api/reportsharing/reports { name: "Q4-Review", owner: "analyst@corp", payload: { rows: [...], columns: [...], values: [...] } }`
-- Then: Returns 201 with `{ reportId: "uuid", createdAt: "timestamp", sizeBytes: 12345 }`
+- When: `POST /api/reportsharing/reports { "name": "Q4-Review", "owner": "analyst@corp", "payload": { ... } }`
+- Then: Returns 201 with `{ "reportId": "<new GUID>", "name", "owner", "createdAt", "expiresAt", "sizeBytes" }`
+- And: POST ALWAYS creates a new report with a new GUID — no overwrite/update semantics
+- And: The payload is an opaque JSON blob — only valid JSON is required; the Pivot Report structure is NOT validated
+- And: When the Data Server receives a pivot table request carrying a report payload, the report is stored automatically (server-side save; client-side trigger UI deferred to Step 7)
 
 **Scenario 6.3.2: Retrieve Report**
 - Given: Report saved
@@ -1110,16 +1121,18 @@ public class ReportSharingSettings
 - When: `DELETE /api/reportsharing/reports/{reportId}`
 - Then: Returns 204
 
-### 6.4 Report Expiration
+### 6.4 Report Expiration (independent cleanup mechanism)
+
+Expiration is a SEPARATE cleanup mechanism from Auto-Delete. When `ReportExpirationTime > 0`, expired reports are ALWAYS removed during the cleanup sweep — regardless of `AutoDeletingEnabled`.
 
 **Scenario 6.4.1: Permanent Reports (Default)**
-- Given: `reportExpirationTimeMinutes: 0`
+- Given: `ReportExpirationTime: 0`
 - When: Report saved
 - Then: `expiresAt: null`
 - And: Report never expires
 
 **Scenario 6.4.2: Reports with Expiration**
-- Given: `reportExpirationTimeMinutes: 1440` (24 hours)
+- Given: `ReportExpirationTime: 1440` (24 hours)
 - When: Report saved at 10:00 AM
 - Then: `expiresAt: tomorrow 10:00 AM`
 
@@ -1128,48 +1141,66 @@ public class ReportSharingSettings
 - When: `GET /api/reportsharing/reports/{reportId}`
 - Then: Returns 410 Gone
 
+**Scenario 6.4.4: Expired Reports Removed on Cleanup (regardless of AutoDeletingEnabled)**
+- Given: `ReportExpirationTime: 60`, report saved 10:00 AM
+- When: Cleanup sweep runs (every 5 minutes) after 11:00 AM
+- Then: Report file is physically deleted
+- And: Works identically with `AutoDeletingEnabled: true` and `AutoDeletingEnabled: false`
+
 ### 6.5 Storage Quota
 
 **Scenario 6.5.1: Unlimited Quota (Default)**
-- Given: `maxFolderSizeMB: 0`
+- Given: `MaxSizeOfFolder: 0`
 - When: Reports saved
 - Then: No size limit enforced
 
-**Scenario 6.5.2: Quota Limit**
-- Given: `maxFolderSizeMB: 100` (100 MB quota)
-- When: Total folder size reaches 100 MB
-- Then: Next save returns 507 Insufficient Storage
+**Scenario 6.5.2: Quota Exceeded — Auto-Delete Disabled**
+- Given: `MaxSizeOfFolder: 100` (MB), `AutoDeletingEnabled: false`, folder at 95 MB
+- When: New 20 MB report save attempted
+- Then: Returns 507 Insufficient Storage
+- And: Existing reports are NOT removed
 
-**Scenario 6.5.3: Quota Exceeded - Oldest Evicted**
-- Given: Quota set, folder at 99 MB, auto-delete enabled
-- When: New 5 MB report saved
-- Then: Oldest report evicted
-- And: New report saved
-- And: Folder size remains under quota
+**Scenario 6.5.3: Quota Exceeded — Auto-Delete Enabled (oldest evicted)**
+- Given: `MaxSizeOfFolder: 100`, `AutoDeletingEnabled: true`, folder at 95 MB
+- When: New 20 MB report save attempted
+- Then: Oldest reports are deleted until enough space is available
+- And: New report saved successfully (201)
+- And: Folder size stays under the quota
+- And: If ALL existing reports are evicted and the new report STILL exceeds the quota → 507
 
-### 6.6 Auto-Delete Sweep
+### 6.6 Auto-Delete Eviction (quota management ONLY)
 
-**Scenario 6.6.1: Auto-Delete Disabled (Default)**
-- Given: `autoDelete: false`
-- When: Expired reports exist
-- Then: Not automatically deleted
-- And: `GET` returns 410 Gone (but file remains)
+`AutoDeletingEnabled` governs ONLY the Max-Folder-Size eviction policy. It does NOT affect expiration cleanup (§6.4).
+
+**Scenario 6.6.1: Auto-Delete Disabled**
+- Given: `AutoDeletingEnabled: false`
+- When: Folder quota exceeded on save
+- Then: Save returns 507; nothing is auto-removed
 
 **Scenario 6.6.2: Auto-Delete Enabled**
-- Given: `autoDelete: true`
+- Given: `AutoDeletingEnabled: true`, `MaxSizeOfFolder: 100`
 - When: Cleanup sweep runs every 5 minutes
-- Then: Expired reports deleted
-- And: Quota enforced (oldest evicted if exceeded)
+- Then: Expired reports deleted (§6.4, regardless of this flag)
+- And: If folder size exceeds quota, oldest reports evicted until under limit
 
-### 6.7 Report Sharing API
+### 6.7 Report Sharing Settings API
 
 **Scenario 6.7.1: Get Report Sharing Settings**
 - When: `GET /api/config/reportsharing`
-- Then: Returns 200 with settings
+- Then: Returns 200 with `{ endpointEnabled, pathToFolder, reportExpirationTime, maxSizeOfFolder, autoDeletingEnabled }`
 
 **Scenario 6.7.2: Update Report Sharing Settings**
-- When: `PUT /api/config/reportsharing { endpointEnabled: true, maxFolderSizeMB: 500, autoDelete: true }`
-- Then: Returns 200, applied immediately (except StoragePath)
+- When: `PUT /api/config/reportsharing { "endpointEnabled": true, "maxSizeOfFolder": 500, "autoDeletingEnabled": true }`
+- Then: Returns 200, applied immediately (except `pathToFolder`, which requires restart)
+- And: Negative `reportExpirationTime`/`maxSizeOfFolder` → 422
+- And: `pathToFolder` with path traversal (`../../`) → 422
+
+### 6.8 Settings Persistence & Precedence
+
+- Persisted settings are written to `{DataFolder}/reportsharing.json` by `PUT /api/config/reportsharing` (same atomic temp-rename store as other settings).
+- Precedence model (same as Steps 2–5): non-null fields in `reportsharing.json` override appsettings.json `ReportSharingOptions`; missing/null persisted fields keep the appsettings values; no persisted file → appsettings values stand.
+- A persisted `endpointEnabled`/`reportExpirationTime`/`maxSizeOfFolder`/`autoDeletingEnabled` applies at startup (load-before-listen); `pathToFolder` is resolved relative to `{DataFolder}` when not absolute.
+- Startup validation: invalid values (negative numbers, traversing `pathToFolder`) fail fast with a clear message (exit 1).
 
 ---
 
