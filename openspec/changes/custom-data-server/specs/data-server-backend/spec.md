@@ -15,18 +15,22 @@
 | 1 | §0 Index Configuration | ✅ Implemented & verified | All scenarios verified live; see deltas below |
 | 2 | §1 General Settings | ✅ Implemented & verified | All scenarios verified live; see deltas below |
 | 3 | §2 Data Storage Settings | ✅ Implemented & verified | CacheSizeLimit aligned with Flexmonster semantics; see deltas below |
-| 4 | §4 HTTPS Settings | ✅ Implemented & verified | Verified live with self-signed PEM cert: TLS 1.2+ enforced (TLS 1.1 refused), HTTP/1 & HTTP/2 negotiation, GET/PUT /api/config/https merge-patch, https.json persistence (password never persisted), 422 validation, requiresRestart semantics; see deltas below |
+| 4 | §4 HTTPS Settings | ✅ Implemented & verified (COMPLETE) | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; HTTP/1 & HTTP/2 negotiation; merge-patch API; https.json precedence hardened; test PKI shipped (Cert/PEM-Cert/); verify-https.sh 33 checks; see deltas below |
 | 5–7 | §5–§7 | ⬜ Not started | Security, report sharing, client-side integration |
 | 8 | §3 Database Query | ⬜ Deferred to final | REORDERED to Step 8 — requires DB provider support installed on the machine |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
 
-**Step 4 — HTTPS Settings**
-- `https.json` (in `{DataFolder}`) is the persisted source of truth written by `PUT /api/config/https`; at startup it overrides appsettings.json `Https:*` values (password is never persisted; PFX password is memory-only via API).
-- `PfxPassword` is accepted by `PUT` but never returned by `GET` nor written to disk.
-- Certificate sources are mutually exclusive — `422` when more than one is configured (PFX / PEM pair / Windows store thumbprint). Store lookup is Windows-only and rejected with 422 elsewhere (spec §4.1).
-- Kestrel binds `https://0.0.0.0:{General:Port}` when `Https:Enabled`; `SslProtocols = Tls12 | Tls13` (TLS 1.2+ enforced — TLS 1.1 handshake refused, verified live). `UseHttpsRedirection` is applied only when HTTPS is enabled (would otherwise 500 with no https port).
+**Step 4 — HTTPS Settings (COMPLETE — supersedes all earlier deltas for this step)**
+- `https.json` (in `{DataFolder}`) is the persisted source of truth written by `PUT /api/config/https`. **Precedence hardened**: non-null https.json fields override appsettings.json; **null fields never wipe appsettings values**; a stored `enabled:false` cannot disable an appsettings-enabled config; the override is logged loudly at startup.
+- `PfxPassword` is accepted by `PUT` but never returned by `GET` nor written to disk; it survives restarts only via appsettings.json. A restart without it degrades to an HTTP listener with a clear message (no crash).
+- Certificate sources are mutually exclusive — `422` when more than one is configured: PFX / PEM pair / **store lookup by `thumbprint` XOR `subjectName`**.
+- **Store lookup is cross-platform** (SChannel on Windows, OpenSSL-backed store on Linux/macOS — verified live on Linux) with a **`CurrentUser` ↔ `LocalMachine` location fallback** (configured location searched first); entries without a private key are skipped; a total miss yields a detailed error (thumbprint case/format guidance) and HTTP-only degradation.
+- **PEM loading** uses `CreateFromPemFile` with fullchain support (leaf + issuing CA); on Windows the ephemeral key handle is normalized via an in-memory PFX round-trip (default key flags, falls back to the original cert on failure) — fixes connection-closed-before-response.
+- **`AllowInvalidCertificates` REMOVED** (and `AllowHttpTunnelPort` removed): browsers enforce trust/validity themselves; the server verifies only loadability (private key present). An expired or self-signed within-period cert is SERVED; the browser shows its own warning.
+- Kestrel binds `https://0.0.0.0:{General:Port}` when `Https:Enabled`; `SslProtocols = Tls12 | Tls13` (TLS 1.2+ enforced — TLS 1.1 handshake refused, verified live). `UseHttpsRedirection` is applied only when HTTPS is enabled.
 - `requiresRestart: true` for all HTTPS changes (listener binds at startup); invalid settings fail startup fast with a clear message.
+- **Test PKI shipped** at `PivotController/Cert/PEM-Cert/`: dedicated test CA (`test-ca.pem`, `CA:TRUE` — the ONLY file to import into client Trusted Root) + CA-signed SAN leaf (`server.pem`: `DNS:localhost, *.localhost, IP:127.0.0.1, 0.0.0.0`, `serverAuth`) + `localhost-server-fullchain.pem` served by default appsettings. `verify-https.sh`: 33-check end-to-end suite (all three sources, protocols, persistence, secrecy, 422 cases).
 
 **Step 1 — Index Configuration**
 - `CsvDelimiter`/`CsvDecimalSeparator`/`CsvThousandsSeparator` are **enums** (§0.6): `CsvThousandsSeparator ∈ {Comma, Dot, Space}`, `CsvDecimalSeparator ∈ {Comma, Dot}`. Both enum names (`"Dot"`) and raw symbols (`"."`, `","`, `" "`) are accepted in appsettings.json (TypeConverter), API bodies (System.Text.Json converter), and `indexes.json` (Newtonsoft).
@@ -746,15 +750,25 @@ public class HttpsSettings
 {
     public bool Enabled { get; set; } = false;
     public string? PfxPath { get; set; }
-    public string? PfxPassword { get; set; }           // secret, never persisted
+    public string? PfxPassword { get; set; }           // secret, never persisted or returned
     public string? PemCertPath { get; set; }
     public string? PemKeyPath { get; set; }
     public CertificateStoreLocationOption StoreLocation { get; set; } = CertificateStoreLocationOption.CurrentUser;
     public string StoreName { get; set; } = "My";
-    public string? Thumbprint { get; set; }
+    public string? Thumbprint { get; set; }            // store lookup by thumbprint (exact)
+    public string? SubjectName { get; set; }            // store lookup by subject name (e.g. "CN=localhost")
     public HttpProtocolsOption Protocols { get; set; } = HttpProtocolsOption.HTTP1_AND_HTTP2;
 }
 ```
+
+**Removed option:** `allowInvalidCertificates` — browsers/clients block invalid or untrusted
+certificates themselves, so the server never gates certificates on trust or validity. The
+server verifies only **loadability** (§4.4).
+
+**Certificate sources:** exactly one of PFX (`pfxPath`+`pfxPassword`), PEM
+(`pemCertPath`+`pemKeyPath`), or certificate-store lookup (`thumbprint` XOR `subjectName`).
+Configuring two sources returns 422. Explicit JSON `null` for a path field clears it;
+omission leaves it unchanged.
 
 ### 4.2 HTTPS Enable/Disable
 
@@ -770,14 +784,29 @@ public class HttpsSettings
 - Then: Certificate loaded from PFX
 - And: HTTPS listener configured
 - And: Requests use HTTPS
+- Note: the PFX password survives restarts only via appsettings.json (§4.5: never persisted
+  by the API); after restart without it, startup degrades to an HTTP listener with a clear
+  message (no crash)
 
 **Scenario 4.2.3: Enable HTTPS with PEM**
-- Given: `enabled: true`, `pemCertPath: "cert.pem"`, `pemKeyPath: "key.pem"`
+- Given: `enabled: true`, `pemCertPath: "cert.pem"`, `pemKeyPath: "key.pem"` (fullchain file
+  accepted: leaf + issuing CA concatenated)
 - When: Application starts
 - Then: Certificate loaded from PEM
 - And: HTTPS listener configured
 
-**Scenario 4.2.4: Requires Restart**
+**Scenario 4.2.4: Enable HTTPS with Certificate Store**
+- Given: `enabled: true`, `thumbprint: "<hex>"` (or `subjectName: "CN=localhost"`),
+  `storeLocation`, `storeName: "My"`
+- When: Application starts
+- Then: Certificate loaded from the store — the configured location is searched first, then
+  the other location (`CurrentUser` ↔ `LocalMachine` fallback)
+- And: A key-less store entry is skipped; the first match WITH a private key is served
+- And: A total miss produces a detailed error (thumbprint case/format guidance) —
+  startup degrades to HTTP-only (no crash)
+- Note: cross-platform (SChannel on Windows, OpenSSL-backed store on Linux/macOS)
+
+**Scenario 4.2.5: Requires Restart**
 - Given: HTTPS disabled
 - When: `PUT /api/config/https { enabled: true, pfxPath: "cert.pfx", pfxPassword: "secret" }`
 - Then: Returns 200 with `requiresRestart: true`
@@ -801,22 +830,27 @@ public class HttpsSettings
 - When: HTTP/1 and HTTP/2 clients connect
 - Then: Both work (client chooses)
 
-### 4.4 Certificate Loadability (REMOVED: AllowInvalidCertificates option)
+### 4.4 Certificate Loadability (trust is client-side; no AllowInvalidCertificates option)
 
-**Removed option:** `allowInvalidCertificates` — browsers/clients block invalid or untrusted
-certificates themselves, so the server does not gate certificates on trust or validity. The
-server verifies only **loadability**: the configured certificate must load and carry a
-private key (otherwise it cannot serve TLS at all — 422 / HTTP-only fallback).
+The server never checks chain trust, expiry, or "invalidity" — browsers enforce that
+themselves (`net::ERR_CERT_AUTHORITY_INVALID` is a client trust decision). The server
+verifies only that the certificate can actually serve TLS.
 
-**Scenario 4.4.1: Server-side loadability check (retained)**
+**Scenario 4.4.1: Loadable certificate accepted**
 - Given: A configured certificate source that loads and has a private key
 - When: Application starts / `PUT /api/config/https`
-- Then: Certificate accepted; HTTPS served (trust/validity enforced by the browser)
+- Then: Certificate accepted; HTTPS served (trust/validity enforced by each client)
 
-**Scenario 4.4.2: Unloadable or key-less certificate (retained)**
+**Scenario 4.4.2: Unloadable or key-less certificate rejected**
 - Given: Missing cert file, wrong password, or certificate without private key
 - When: Application starts / `PUT /api/config/https`
 - Then: 422 / HTTP-only fallback with a clear error message
+
+**Scenario 4.4.3: Expired or self-signed certificate SERVED**
+- Given: An expired or self-signed (within-period) certificate
+- When: Application starts
+- Then: HTTPS is served (server does not gate validity); the browser displays its own
+  warning/error — the operator imports the issuing CA into the client trust store to clear it
 
 ### 4.5 HTTPS API
 
@@ -824,11 +858,39 @@ private key (otherwise it cannot serve TLS at all — 422 / HTTP-only fallback).
 - When: `GET /api/config/https`
 - Then: Returns 200 with settings (password not included)
 
-**Scenario 4.5.2: Update HTTPS Settings**
+**Scenario 4.5.2: Update HTTPS Settings (merge-patch)**
 - When: `PUT /api/config/https { enabled: true, protocols: "HTTP2", ... }`
 - Then: Returns 200 with `requiresRestart: true`
+- And: Omitted properties are unchanged; explicit JSON `null` clears a path field
+- And: Persisted to `{DataFolder}/https.json` (sanitized — password never written)
+
+**Scenario 4.5.3: https.json Precedence at Startup**
+- Given: `{DataFolder}/https.json` exists (written by a prior PUT)
+- When: Application starts
+- Then: Non-null https.json fields override appsettings.json; null fields do NOT wipe
+  appsettings values; a stored `enabled: false` does not disable an appsettings-enabled config
+- And: The override is logged loudly at startup (with "delete the file" guidance)
 
 ---
+
+
+### 4.6 Implemented Code Reference (Step 4 — as shipped)
+
+| Concern | File / Member |
+|---|---|
+| Settings model | `PivotController/Configuration/Models/HttpsSettings.cs` — `Enabled`, `PfxPath`, `PfxPassword` (never persisted/returned), `PemCertPath`, `PemKeyPath`, `StoreLocation`, `StoreName`, `Thumbprint`, `SubjectName`, `Protocols`, `ConfiguredSourceCount`, `Sanitized()` |
+| Certificate resolution | `PivotController/Configuration/Services/CertificateService.cs` — `ResolveCertificate` (PFX → PEM → store), `Validate` (source XOR rules), `ResolveValidatedCertificate`/`TryResolveValidatedCertificate` (loadability: private key only), `MapProtocols`, `LoadPemCertificate` (fullchain; Windows in-memory PFX key normalization with safe fallback) |
+| Store lookup | `CertificateService.ResolveCertificate` store branch — cross-platform `X509Store` (OpenSSL on Linux/macOS), `CurrentUser` ↔ `LocalMachine` fallback, key-less entries skipped, detailed miss errors |
+| Settings service | `PivotController/Configuration/Services/HttpsSettingsService.cs` — merge-patch (explicit-null clears, omission unchanged), `https.json` persistence (sanitized), `LoadPersisted`, PUT-time loadability check (422) |
+| API | `PivotController/Configuration/Controllers/HttpsConfigController.cs` — `GET /api/config/https` (no password), `PUT` merge-patch + 422 validation |
+| Kestrel wiring | `PivotController/Program.cs` — pre-Build https.json load (guarded precedence + loud log), fail-fast `Validate`, `ConfigureKestrel` → `Listen(Any, General:Port)` + `UseHttps(cert)` + `SslProtocols = Tls12 \| Tls13` + `MapProtocols`; `UseHttpsRedirection` only when enabled; graceful HTTP-only degradation on unloadable certs |
+| Test PKI | `PivotController/Cert/PEM-Cert/` — `test-ca.pem` (CA:TRUE, import into client Trusted Root), `test-ca.key`, `server.pem` (CA-signed SAN leaf), `server.key`, `localhost-server-fullchain.pem` (leaf + CA, what the server serves) |
+| Verification | `PivotController/verify-https.sh` (33 checks), live store/pem/pfx end-to-end runs; tunnel samples `wwwroot/tunnel-completed.html`, `https-tunnel-simple.html`, `https-tunnel-sample.html`, `data-server.html` (EJ2 35.1.37, `Pivot.Engine` 35.1.41) |
+
+Key resolution order (`ResolveCertificate`): PFX path → PEM pair → store (`thumbprint` XOR `subjectName`, location fallback) → error "no certificate source configured".
+
+Startup (`Program.cs`): appsettings `Https:*` → guarded `https.json` merge (non-null wins; `enabled:true` only; enums always) → `Validate` fail-fast → `TryResolveValidatedCertificate` (loadability) → HTTPS listener or documented HTTP-only degradation.
+
 
 ## 5. Security Settings Configuration (STEP 6)
 
