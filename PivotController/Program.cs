@@ -10,6 +10,11 @@ var CustomOrigins = "_customOrigins";
 // Data Server configuration (Index Configuration — Step 1).
 var dataServerSettings = builder.Configuration.GetSection(DataServerSettings.SectionName).Get<DataServerSettings>() ?? new DataServerSettings();
 builder.Services.AddSingleton(dataServerSettings);
+
+// Database Query settings (Step 7, spec §3): command timeout for database-backed indexes.
+var databaseQuerySettings = builder.Configuration.GetSection(DatabaseQuerySettings.SectionName).Get<DatabaseQuerySettings>() ?? new DatabaseQuerySettings();
+builder.Services.AddSingleton(databaseQuerySettings);
+builder.Services.AddSingleton<DatabaseQuerySettingsService>();
 builder.Services.AddSingleton<AtomicJsonStore>();
 builder.Services.AddSingleton<IndexStore>();
 builder.Services.AddSingleton<IDataSourceProviderFactory, DataSourceProviderFactory>();
@@ -96,12 +101,60 @@ builder.Services.AddControllers().AddJsonOptions(options =>
 });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+// Security settings (Step 5, spec §5): Basic Auth + CORS origins.
+// Persisted security.json (written by PUT /api/config/security) overrides appsettings.
+var securitySettings = builder.Configuration.GetSection(SecuritySettings.SectionName).Get<SecuritySettings>() ?? new SecuritySettings();
+{
+    var securityPersistedPath = System.IO.Path.Combine(httpsGeneralPath, "security.json");
+    var securityStore = new AtomicJsonStore(Microsoft.Extensions.Logging.LoggerFactory.Create(b => { }).CreateLogger<AtomicJsonStore>());
+    if (System.IO.File.Exists(securityPersistedPath))
+    {
+        var persistedSecurity = securityStore.Load<SecuritySettings>(securityPersistedPath, new SecuritySettings());
+        securitySettings.BasicAuthEnabled = persistedSecurity.BasicAuthEnabled;
+        securitySettings.AllowedOrigins = persistedSecurity.AllowedOrigins;
+        Console.WriteLine($"Security: security.json found at {securityPersistedPath}; its values override appsettings.json 'Security'.");
+    }
+}
+builder.Services.AddSingleton(securitySettings);
+builder.Services.AddSingleton<PivotController.Core.Security.PBKDF2PasswordHasher>();
+builder.Services.AddSingleton<PivotController.Security.Services.UserService>();
+builder.Services.AddSingleton<PivotController.Security.Services.SecuritySettingsService>();
+
+// Report Sharing settings (Step 6, spec §6): persisted reportsharing.json overrides appsettings.
+var reportSharingSettings = builder.Configuration.GetSection(ReportSharingSettings.SectionName).Get<ReportSharingSettings>() ?? new ReportSharingSettings();
+{
+    var rsPersistedPath = System.IO.Path.Combine(httpsGeneralPath, "reportsharing.json");
+    var rsStore = new AtomicJsonStore(Microsoft.Extensions.Logging.LoggerFactory.Create(b => { }).CreateLogger<AtomicJsonStore>());
+    if (System.IO.File.Exists(rsPersistedPath))
+    {
+        var persistedRs = rsStore.Load<ReportSharingSettings>(rsPersistedPath, new ReportSharingSettings());
+        reportSharingSettings.EndpointEnabled = persistedRs.EndpointEnabled;
+        reportSharingSettings.StoragePath = persistedRs.StoragePath;
+        reportSharingSettings.ReportExpirationTimeMinutes = persistedRs.ReportExpirationTimeMinutes;
+        reportSharingSettings.MaxFolderSizeMB = persistedRs.MaxFolderSizeMB;
+        reportSharingSettings.AutoDelete = persistedRs.AutoDelete;
+        Console.WriteLine($"ReportSharing: reportsharing.json found at {rsPersistedPath}; its values override appsettings.json 'ReportSharing'.");
+    }
+}
+builder.Services.AddSingleton(reportSharingSettings);
+builder.Services.AddSingleton<PivotController.Reports.Services.ReportSharingService>();
+builder.Services.AddSingleton<PivotController.Reports.Services.ReportSharingSettingsService>();
+builder.Services.AddHostedService<PivotController.Reports.Services.ReportSweepWorker>();
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy(CustomOrigins,
-    builder =>
+    options.AddPolicy(CustomOrigins, policy =>
     {
-        builder.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+        // Native ASP.NET Core CORS behavior (spec §5.3, clarified): disallowed origins
+        // receive no CORS headers and are blocked by the browser — no server-side 403.
+        if (securitySettings.AllowsAllOrigins)
+        {
+            policy.AllowAnyOrigin();
+        }
+        else
+        {
+            policy.WithOrigins(securitySettings.AllowedOrigins.ToArray());
+        }
+        policy.AllowAnyHeader().AllowAnyMethod();
     });
 });
 // MemoryCache without a global size cap: CacheSizeLimit is enforced per index
@@ -189,6 +242,14 @@ if (httpsSettings.Enabled)
 {
     app.UseHttpsRedirection();
 }
+
+// Security (Step 5, spec §5): load persisted users + settings, then Basic Auth middleware.
+var userService = app.Services.GetRequiredService<PivotController.Security.Services.UserService>();
+userService.Load();
+app.Services.GetRequiredService<PivotController.Security.Services.SecuritySettingsService>().LoadPersisted();
+app.Services.GetRequiredService<PivotController.Reports.Services.ReportSharingSettingsService>().LoadPersisted();
+app.Services.GetRequiredService<DatabaseQuerySettingsService>().LoadPersisted();
+app.UseMiddleware<PivotController.Security.PivotBasicAuthMiddleware>();
 
 app.UseAuthorization();
 
