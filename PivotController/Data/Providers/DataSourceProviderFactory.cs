@@ -1,7 +1,5 @@
 using System.Dynamic;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using PivotController.Configuration.Models;
 
 namespace PivotController.Data.Providers
@@ -16,8 +14,8 @@ namespace PivotController.Data.Providers
         private readonly DatabaseDataProvider _databaseProvider;
 
         public DataSourceProviderFactory(
-            IOptions<DatabaseQuerySettings> querySettings,
-            IConfiguration configuration,
+            DatabaseQuerySettings querySettings,
+            Microsoft.Extensions.Configuration.IConfiguration configuration,
             ILoggerFactory? loggerFactory = null)
         {
             _databaseProvider = new DatabaseDataProvider(

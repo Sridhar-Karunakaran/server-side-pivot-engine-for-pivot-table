@@ -14,9 +14,11 @@ builder.Services.AddSingleton(dataServerSettings);
 builder.Services.AddSingleton<AtomicJsonStore>();
 builder.Services.AddSingleton<IndexStore>();
 
-// Database Query Settings (Step 7 — Database Query Integration, spec §3.1/§3.x):
-// command timeout for all database indexes; runtime-applicable via the config API.
-builder.Services.Configure<DatabaseQuerySettings>(builder.Configuration.GetSection("DatabaseQuery"));
+// Database Query settings (Step 7): Command timeout / Command time limit (spec §3).
+// Runtime-applicable on every query execution; persisted to {DataFolder}/databasequery.json.
+var databaseQuerySettings = builder.Configuration.GetSection("DatabaseQuery").Get<DatabaseQuerySettings>() ?? new DatabaseQuerySettings();
+builder.Services.AddSingleton(databaseQuerySettings);
+builder.Services.AddSingleton<DatabaseQuerySettingsService>();
 builder.Services.AddSingleton<IDatabaseQueryProviderFactory, DatabaseQueryProviderRegistry>();
 
 builder.Services.AddSingleton<IDataSourceProviderFactory, DataSourceProviderFactory>();
@@ -262,6 +264,9 @@ generalService.EnsureDataFolders();
 // Load persisted DataStorage settings (datastorage.json) so restart-required changes
 // (CacheSizeLimit / MaxCacheItemSizeBytes) actually apply after a restart.
 app.Services.GetRequiredService<DataStorageSettingsService>().LoadPersisted();
+// Load persisted Database Query settings (databasequery.json) so runtime changes made via
+// PUT /api/config/databasequery survive restarts (spec §3.2.4/§3.3).
+app.Services.GetRequiredService<DatabaseQuerySettingsService>().LoadPersisted();
 // Load persisted Security settings (security.json: authorization.enabled, cors.allowOrigin)
 // so runtime changes made via PUT /api/config/security survive restarts (spec §5.4).
 app.Services.GetRequiredService<SecuritySettingsService>().LoadPersisted(generalService.DataFolderPath);

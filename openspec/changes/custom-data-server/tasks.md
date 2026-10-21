@@ -2,7 +2,7 @@
 
 **Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** Steps 1–6 implemented & verified (Index, General, Data Storage, HTTPS, Security, **Report Sharing COMPLETE**). **§3.x Database Data Source Integration (DB fetching/indexing) implemented & verified live** (PostgreSQL 17 via Npgsql + SQLite; spec §3.x, design §9). Next: Step 7 Client-Side Integration; the Database Query Settings step (Command timeout / Command time limit ONLY — NOT data fetching) is last. Step 7 implementation is awaiting user approval.
+**Status:** Steps 1–6 implemented & verified. **§3.x DB fetching/indexing implemented & verified live** (PostgreSQL 17 via Npgsql + SQLite). **Step 7 Database Query Settings (Command timeout / Command time limit) implemented & verified live** (GET/PUT /api/config/databasequery, runtime apply, timeout enforcement 3.2.3, validation, databasequery.json persistence). Remaining: Client-Side Integration (final step).
 
 ---
 
@@ -588,6 +588,8 @@ PostgreSQL, MySQL, MariaDB, MSSQL, Oracle, SQLite)
 - [x] Long-running query canceled at timeout threshold; returns 504
 - [x] Timeout disabled (0): query runs indefinitely
 
+
+**VERIFIED (live, this branch, 2026-10):** GET/PUT /api/config/databasequery (3.2.4 runtime apply, requiresRestart=false); timeout=3s enforced on pg_sleep(10) query (3.2.3) with retry policy participation (3 attempts x 3s); commandTimeLimit=-5 rejected 422; timeout disabled → driver default; databasequery.json persistence verified across restart (timeout disabled + limit 3 restored);
 **Specification Mapping:** 5.1
 
 ---
