@@ -2,37 +2,34 @@
 
 **Date:** 2024-12-19
 
-**Version:** 2.3 (clarifications 2026-10: bootstrap endpoint, native CORS behavior, StoragePath resolution, quota ordering, client index via query string, SQLite-only provider scope)
+**Version:** 2.2
 
-**Implementation Order (finalized 2026-10 — ALL STEPS COMPLETE):** Index Configuration (Step 1) → General Settings → Data Storage Settings → **HTTPS Settings (Step 4)** → Security Settings (Step 5) → Report Sharing Settings (Step 6) → **Database Query Settings (Step 7)** → **Client-Side Integration (Step 8 - FINAL)** — deferred to last because it requires DB provider support installed on the machine; no other step depends on it.
+**Implementation Order (revised 2026-10):** Index Configuration (Step 1) → General Settings → Data Storage Settings → **HTTPS Settings (Step 4 — COMPLETE)** → Security Settings (Step 5) → Report Sharing Settings (Step 6) → Client-Side Integration (Step 7) → **Database Query Settings (Step 8 - FINAL)** — deferred to last because it requires DB provider support on the machine.
 
 ---
 
-## IMPLEMENTATION STATUS (updated after Steps 1–4 implementation)
+## IMPLEMENTATION STATUS (updated after Steps 1–4 implementation — Step 4 HTTPS COMPLETE)
 
 | Step | Section | Status | Notes |
 |------|---------|--------|-------|
 | 1 | §0 Index Configuration | ✅ Implemented & verified | All scenarios verified live; see deltas below |
 | 2 | §1 General Settings | ✅ Implemented & verified | All scenarios verified live; see deltas below |
 | 3 | §2 Data Storage Settings | ✅ Implemented & verified | CacheSizeLimit aligned with Flexmonster semantics; see deltas below |
-| 4 | §4 HTTPS Settings | ✅ Implemented & verified (COMPLETE) | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; HTTP/1 & HTTP/2 negotiation; merge-patch API; https.json precedence hardened; test PKI shipped (Cert/PEM-Cert/); verify-https.sh 33 checks; see deltas below |
-| 5 | §5 Security Settings | ✅ Implemented | PBKDF2 users (users.json), bootstrap endpoint, BasicAuth middleware, native CORS behavior |
-| 6 | §6 Report Sharing | ✅ Implemented | Report CRUD, expiration, quota + AutoDelete-before-507 ordering, 5-min sweep worker (sales fixture: {DataFolder}/reports) |
-| 7 | §3 Database Query | ✅ Implemented | SQLite provider (Microsoft.Data.Sqlite); command timeout; GET/PUT /api/config/databasequery |
-| 8 | §7 Client-Side Integration | ✅ Implemented & verified | Sample/pivot.js sends index via `?index=` query string; body/?query/default resolution order |
+| 4 | §4 HTTPS Settings | ✅ COMPLETE | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; merge-patch API; https.json precedence hardened; test PKI (Cert/PEM-Cert/); verify-https.sh 33 checks |
+| 5–7 | §5–§7 | ⬜ Not started | Security, report sharing, client-side integration |
+| 8 | §3 Database Query | ⬜ Deferred to final | REORDERED to Step 8 — requires DB provider support on the machine |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
 
-**Step 4 — HTTPS Settings (COMPLETE — supersedes all earlier deltas for this step)**
-- `https.json` (in `{DataFolder}`) is the persisted source of truth written by `PUT /api/config/https`. **Precedence hardened**: non-null https.json fields override appsettings.json; **null fields never wipe appsettings values**; a stored `enabled:false` cannot disable an appsettings-enabled config; the override is logged loudly at startup.
-- `PfxPassword` is accepted by `PUT` but never returned by `GET` nor written to disk; it survives restarts only via appsettings.json. A restart without it degrades to an HTTP listener with a clear message (no crash).
-- Certificate sources are mutually exclusive — `422` when more than one is configured: PFX / PEM pair / **store lookup by `thumbprint` XOR `subjectName`**.
-- **Store lookup is cross-platform** (SChannel on Windows, OpenSSL-backed store on Linux/macOS — verified live on Linux) with a **`CurrentUser` ↔ `LocalMachine` location fallback** (configured location searched first); entries without a private key are skipped; a total miss yields a detailed error (thumbprint case/format guidance) and HTTP-only degradation.
-- **PEM loading** uses `CreateFromPemFile` with fullchain support (leaf + issuing CA); on Windows the ephemeral key handle is normalized via an in-memory PFX round-trip (default key flags, falls back to the original cert on failure) — fixes connection-closed-before-response.
-- **`AllowInvalidCertificates` REMOVED** (and `AllowHttpTunnelPort` removed): browsers enforce trust/validity themselves; the server verifies only loadability (private key present). An expired or self-signed within-period cert is SERVED; the browser shows its own warning.
-- Kestrel binds `https://0.0.0.0:{General:Port}` when `Https:Enabled`; `SslProtocols = Tls12 | Tls13` (TLS 1.2+ enforced — TLS 1.1 handshake refused, verified live). `UseHttpsRedirection` is applied only when HTTPS is enabled.
-- `requiresRestart: true` for all HTTPS changes (listener binds at startup); invalid settings fail startup fast with a clear message.
-- **Test PKI shipped** at `PivotController/Cert/PEM-Cert/`: dedicated test CA (`test-ca.pem`, `CA:TRUE` — the ONLY file to import into client Trusted Root) + CA-signed SAN leaf (`server.pem`: `DNS:localhost, *.localhost, IP:127.0.0.1, 0.0.0.0`, `serverAuth`) + `localhost-server-fullchain.pem` served by default appsettings. `verify-https.sh`: 33-check end-to-end suite (all three sources, protocols, persistence, secrecy, 422 cases).
+**Step 4 — HTTPS Settings (COMPLETE)**
+- `https.json` (in `{DataFolder}`) is the persisted source of truth written by `PUT /api/config/https`. **Precedence hardened**: non-null fields override appsettings.json; **null fields never wipe appsettings values**; a stored `enabled:false` cannot disable an appsettings-enabled config; the override is logged loudly at startup.
+- `PfxPassword`: accepted by `PUT`, never returned by `GET` nor written to disk; survives restarts only via appsettings.json. A restart without it degrades to an HTTP listener with a clear message (no crash).
+- Certificate sources are mutually exclusive (422 when more than one): PFX / PEM pair / **store lookup by `thumbprint` XOR `subjectName`**.
+- **Store lookup is cross-platform** (SChannel on Windows, OpenSSL-backed on Linux/macOS — verified live on Linux) with a **`CurrentUser` ↔ `LocalMachine` location fallback**; key-less entries skipped; detailed miss errors; HTTP-only degradation instead of crash.
+- **PEM loading**: fullchain support (leaf + issuing CA); on Windows the ephemeral key handle is normalized via an in-memory PFX round-trip (default key flags, safe fallback) — fixes connection-closed-before-response.
+- **`AllowInvalidCertificates` REMOVED** (and `AllowHttpTunnelPort`): browsers enforce trust/validity themselves; the server verifies only loadability (private key present). An expired or self-signed within-period cert is SERVED; the browser shows its own warning.
+- TLS 1.2+ enforced (`Tls12 | Tls13`; TLS 1.1 refused, verified live); `UseHttpsRedirection` only when enabled; `requiresRestart: true` for all changes.
+- **Test PKI** at `PivotController/Cert/PEM-Cert/`: dedicated test CA (`test-ca.pem`, `CA:TRUE` — the ONLY file to import into client Trusted Root) + CA-signed SAN leaf (`server.pem`) + `localhost-server-fullchain.pem`. `verify-https.sh`: 33-check end-to-end suite.
 
 **Step 1 — Index Configuration**
 - `CsvDelimiter`/`CsvDecimalSeparator`/`CsvThousandsSeparator` are **enums** (§0.6): `CsvThousandsSeparator ∈ {Comma, Dot, Space}`, `CsvDecimalSeparator ∈ {Comma, Dot}`. Both enum names (`"Dot"`) and raw symbols (`"."`, `","`, `" "`) are accepted in appsettings.json (TypeConverter), API bodies (System.Text.Json converter), and `indexes.json` (Newtonsoft).
@@ -692,15 +689,7 @@ public class DataStorageSettings
 
 ---
 
-## 3. Database Query Settings Configuration (STEP 7) (IMPLEMENTED & VERIFIED)
-
-**Provider scope (clarified):** To minimize dependencies and simplify onboarding,
-Phase 1 treats **SQLite as the mandatory (and only) provider**. The SQLite database
-at `PivotController/DataSource/sales.db` is the official Phase 1 sample dataset and
-validation fixture (zero external installation requirements, simplified testing,
-easier CI/CD, no server configuration). SQL Server, PostgreSQL, MySQL, MariaDB, and
-Oracle are **planned future providers**, introduced incrementally through
-provider-specific packages in later phases.
+## 3. Database Query Settings Configuration (STEP 4)
 
 ### 3.1 Configuration Model
 
@@ -901,7 +890,7 @@ Key resolution order (`ResolveCertificate`): PFX path → PEM pair → store (`t
 Startup (`Program.cs`): appsettings `Https:*` → guarded `https.json` merge (non-null wins; `enabled:true` only; enums always) → `Validate` fail-fast → `TryResolveValidatedCertificate` (loadability) → HTTPS listener or documented HTTP-only degradation.
 
 
-## 5. Security Settings Configuration (STEP 5) (IMPLEMENTED & VERIFIED)
+## 5. Security Settings Configuration (STEP 6)
 
 ### 5.1 Configuration Model
 
@@ -935,32 +924,16 @@ public class SecuritySettings
 - When: Request with `Authorization: Basic aW52YWxpZDppbnZhbGlk` (invalid)
 - Then: Returns 401 with `WWW-Authenticate: Basic realm`
 
-**Protected surface (clarified):** When Basic Authentication is enabled, ALL
-administrative endpoints (`/api/config/*`, `/api/indexes/*`, `/api/security/*`)
-require authentication. The pivot data endpoint (`/api/pivot/post`) is also
-protected when auth is enabled. The ONLY anonymous-capable endpoint is the
-bootstrap endpoint below, and only while no users exist.
-
-**Scenario 5.2.5: First User Creation (Bootstrap, Anonymous)**
-- Given: No users exist
-- When: `POST /api/security/users/bootstrap { username: "admin", password: "password" }`
+**Scenario 5.2.5: First User Creation (Anonymous)**
+- Given: Auth enabled, no users exist
+- When: `POST /api/security/users { username: "admin", password: "password" }`
 - Then: Returns 201 (first user allowed anonymous)
 - And: User created with PBKDF2-hashed password
-- And: Subsequent bootstrap calls fail (401/409) once any user exists
 
 **Scenario 5.2.6: Subsequent User Creation (Auth Required)**
 - Given: Auth enabled, admin user exists
 - When: Unauthenticated `POST /api/security/users { username: "user2", password: "pwd" }`
 - Then: Returns 401 (must authenticate)
-
-**Bootstrap Flow (clarified):**
-```
-Fresh Installation → No Users Exist → POST /api/security/users/bootstrap
-→ Create First Admin User → Enable Authentication
-→ All Administrative APIs Require Authentication
-```
-
-**Note:** Basic Authentication should be used over HTTPS in production deployments.
 
 ### 5.3 CORS Origin Validation
 
@@ -970,31 +943,17 @@ Fresh Installation → No Users Exist → POST /api/security/users/bootstrap
 - Then: CORS headers allow all
 - And: Request proceeds
 
-**Behavior (clarified):** The Data Server uses **native ASP.NET Core CORS middleware
-behavior** — requests failing CORS validation do NOT receive the required CORS headers
-and are blocked by the browser according to standard browser CORS enforcement
-behavior. The server does NOT return an explicit `403 Forbidden` for CORS-blocked
-requests.
-
 **Scenario 5.3.2: Specific Origins Only**
 - Given: `allowedOrigins: ["https://app.example.com", "https://app2.example.com"]`
 - When: Request from https://app.example.com
-- Then: CORS headers allow origin; request proceeds
+- Then: CORS headers allow origin
 - When: Request from https://other.com
-- Then: No CORS headers returned; browser blocks access per standard CORS
-  enforcement (no explicit server-side 403)
+- Then: Returns 403 Forbidden (CORS blocked)
 
-**Scenario 5.3.3: No Origin Header (Non-Browser Client)**
+**Scenario 5.3.3: No Origin Header (CSRF Defense)**
 - Given: Restricted origins configured
-- When: Request without Origin header (non-browser client such as curl)
-- Then: Request is processed normally (CORS is a browser enforcement mechanism;
-  non-browser clients are not subject to it)
-
-**CORS Enforcement Flow**
-```
-Allowed Origin  → Request Processed
-Disallowed Origin → No CORS Headers Returned → Browser Blocks Access
-```
+- When: Request without Origin header (non-browser)
+- Then: Returns 403 (CSRF defense-in-depth)
 
 ### 5.4 User Management APIs
 
@@ -1025,7 +984,7 @@ Disallowed Origin → No CORS Headers Returned → Browser Blocks Access
 
 ---
 
-## 6. Report Sharing Settings Configuration (STEP 6) (IMPLEMENTED & VERIFIED)
+## 6. Report Sharing Settings Configuration (STEP 7)
 
 ### 6.1 Configuration Model
 
@@ -1033,17 +992,11 @@ Disallowed Origin → No CORS Headers Returned → Browser Blocks Access
 public class ReportSharingSettings
 {
     public bool EndpointEnabled { get; set; } = false;
-    public string? StoragePath { get; set; }          // default: {DataFolder}/reports
+    public string StoragePath { get; set; } = "DataServer/reports";
     public int ReportExpirationTimeMinutes { get; set; } = 0;  // 0 = permanent
     public int MaxFolderSizeMB { get; set; } = 0;               // 0 = unlimited
     public bool AutoDelete { get; set; } = false;
 }
-
-// StoragePath resolution (clarified):
-// - Not specified / null  → {DataFolder}/reports
-// - Relative ("reports/custom") → {DataFolder}/reports/custom
-// - Absolute ("D:\SharedReports") → used directly without modification.
-// DataFolder is the root storage location for all Data Server artifacts.
 ```
 
 ### 6.2 Endpoint Enable/Disable
@@ -1105,31 +1058,17 @@ public class ReportSharingSettings
 - When: Reports saved
 - Then: No size limit enforced
 
-**Quota handling order (clarified):** auto-delete processing occurs BEFORE the
-storage-validation failure is returned.
+**Scenario 6.5.2: Quota Limit**
+- Given: `maxFolderSizeMB: 100` (100 MB quota)
+- When: Total folder size reaches 100 MB
+- Then: Next save returns 507 Insufficient Storage
 
-```
-AutoDelete = false:  Storage Limit Reached → Report Save Rejected → 507 Insufficient Storage
-AutoDelete = true:   Storage Limit Reached → Delete Oldest Reports → Space Freed → Save New Report
-                     Storage Limit Reached → Delete Eligible Reports → Insufficient Space Remains → 507
-```
-
-**Scenario 6.5.2: Quota Limit (AutoDelete Disabled)**
-- Given: `maxFolderSizeMB: 100` (100 MB quota), `autoDelete: false`
-- When: Total folder size reaches 100 MB and a new save is attempted
-- Then: Report save rejected; returns 507 Insufficient Storage
-
-**Scenario 6.5.3: Quota Exceeded - Oldest Evicted (AutoDelete Enabled)**
+**Scenario 6.5.3: Quota Exceeded - Oldest Evicted**
 - Given: Quota set, folder at 99 MB, auto-delete enabled
 - When: New 5 MB report saved
-- Then: Oldest report(s) deleted first to make room
+- Then: Oldest report evicted
 - And: New report saved
 - And: Folder size remains under quota
-
-**Scenario 6.5.4: Quota Exceeded - Eviction Cannot Free Space**
-- Given: AutoDelete enabled, quota exceeded
-- When: All eligible reports deleted and the new report still exceeds quota
-- Then: Returns 507 Insufficient Storage
 
 ### 6.6 Auto-Delete Sweep
 
@@ -1157,7 +1096,7 @@ AutoDelete = true:   Storage Limit Reached → Delete Oldest Reports → Space F
 
 ---
 
-## 7. Pivot Request Routing & Cache Integration (STEP 8 - Final: Client-Side) (IMPLEMENTED & VERIFIED)
+## 7. Pivot Request Routing & Cache Integration (STEP 8 - Final: Client-Side)
 
 **FINAL STEP:** Client sends index name; controller routes to correct index.
 
@@ -1166,26 +1105,6 @@ AutoDelete = true:   Storage Limit Reached → Delete Oldest Reports → Space F
 **IMPORTANT:** During Phase 1 development:
 1. **Test Phase (Early):** Declare index name directly in controller to verify indexing works
 2. **Integration Phase (Final):** Client sends index name in request body
-
-### 7.1.1 Index Resolution Order (clarified)
-
-The Syncfusion Pivot client does not automatically serialize arbitrary custom
-`dataSourceSettings` properties into the POST request payload. Phase 1 therefore
-resolves the index in the following order:
-
-1. Request body `"index"` property (if present)
-2. Query string `?index=`
-3. Controller default `ServerIndexName` (`DefaultIndexId`)
-
-**Recommended client configuration:** append the index to the URL:
-
-```javascript
-url: "/api/pivot/post?index=Sales"
-```
-
-This works without customizing the existing Pivot request payload. Automatic
-inclusion of index metadata within the request body is a possible future
-enhancement.
 
 ### 7.2 Client-Side Index Declaration (Final Step - Step 8)
 
@@ -1203,14 +1122,15 @@ enhancement.
 **Scenario 7.2.3: Pivot Sample Configuration (JavaScript)**
 ```javascript
 // Sample/pivot.js
-const PIVOT_INDEX = 'Sales-Data';
-const PIVOT_URL = 'http://localhost:5285/api/pivot/post?index=' + PIVOT_INDEX;  // ← index via query string
+const PIVOT_INDEX = 'Sales-Data';              // ← declare index
+const PIVOT_URL = 'http://localhost:5285/api/pivot/post';
 
 var pivotGridObj = new ej.pivotview.PivotView({
   dataSourceSettings: {
     url: PIVOT_URL,
     mode: 'Server',
     type: 'API',
+    index: PIVOT_INDEX,                        // ← send with every request
     // ... rest of config
   }
 });
@@ -1229,11 +1149,11 @@ var pivotGridObj = new ej.pivotview.PivotView({
 | **204** | No content | Delete successful |
 | **400** | Bad request | Unknown setting key |
 | **401** | Unauthorized | Bad credentials |
-| **403** | Forbidden | Path traversal (CORS blocked requests follow native ASP.NET Core CORS behavior — no CORS headers returned, browser blocks; no server-side 403) |
+| **403** | Forbidden | CORS blocked, path traversal |
 | **404** | Not found | Index/report not found |
 | **409** | Conflict | Duplicate index name |
 | **422** | Validation error | Invalid port, SourceType immutable |
-| **423** | Disabled | Index disabled |
+| **423** | Disabled | Index disabled, report endpoints disabled |
 | **502** | Bad gateway | Database unavailable, cert loading failed |
 | **504** | Gateway timeout | Query exceeded timeout |
 | **507** | Insufficient storage | Quota exceeded |

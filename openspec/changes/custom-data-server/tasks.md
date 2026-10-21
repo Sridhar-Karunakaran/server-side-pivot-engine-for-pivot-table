@@ -2,7 +2,7 @@
 
 **Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** Steps 1–8 ALL implemented & verified (Index, General, Data Storage, HTTPS, Security, Report Sharing, Database Query (SQLite-only), Client-Side Integration). Order finalized (2026-10): Security = Step 5, Report Sharing = Step 6, Database Query = Step 7 (SQLite mandatory), Client-Side Integration = Step 8 (final).
+**Status:** Steps 1–4 implemented & verified (Index, General, Data Storage, **HTTPS COMPLETE**). **Order revised (2026-10): Database Query Settings deferred to Step 8 (final) because it requires DB provider support on the machine.** Next: Step 5 Security Settings.
 
 ---
 
@@ -509,7 +509,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 
 ---
 
-## Phase 7: Database Query Settings (Step 7; SQLite-only per clarified provider scope)
+## Phase 4: Database Query Settings (DEFERRED — reordered to Step 8 / Final; requires DB support on the machine)
 
 *Estimated: 1-2 days*
 
@@ -518,26 +518,26 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement pluggable database provider pattern
 
 **Subtasks:**
-- [x] Create file: `PivotController/Data/Providers/IDatabaseQueryProvider.cs`
+- [ ] Create file: `PivotController/Data/Providers/IDatabaseQueryProvider.cs`
   - Properties: SourceType
   - Methods: CreateConnection(connectionString)
-- [x] Create file: `PivotController/Data/Providers/SqliteQueryProvider.cs` (mandatory)
+- [ ] Create file: `PivotController/Data/Providers/SqliteQueryProvider.cs` (mandatory)
   - Implement for SQLite connections
-- [x] Create stub files (optional, documented):
+- [ ] Create stub files (optional, documented):
   - `SqlServerQueryProvider.cs` (requires System.Data.SqlClient package)
   - `PostgresqlQueryProvider.cs` (requires Npgsql package)
   - `MySqlQueryProvider.cs` (requires MySqlConnector package)
   - etc.
-- [x] Create file: `PivotController/Data/Providers/DatabaseDataProvider.cs`
+- [ ] Create file: `PivotController/Data/Providers/DatabaseDataProvider.cs`
   - Implement IDataSourceProvider
   - Use IDatabaseQueryProvider factory to create connection
   - Execute query with timeout
   - Map results to ExpandoObject[]
 
 **Verification:**
-- [x] SQLite provider works (mandatory)
-- [x] Optional providers gracefully missing (reflection-registered only if package present)
-- [x] Query execution returns data or timeout error
+- [ ] SQLite provider works (mandatory)
+- [ ] Optional providers gracefully missing (reflection-registered only if package present)
+- [ ] Query execution returns data or timeout error
 
 **Specification Mapping:** 5.1, 5.2, 5.3, 14.1
 
@@ -548,21 +548,21 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Enforce CommandTimeLimit on queries
 
 **Subtasks:**
-- [x] Modify `DatabaseDataProvider`:
+- [ ] Modify `DatabaseDataProvider`:
   - If `CommandTimeoutEnabled=true`, set `command.CommandTimeout = CommandTimeLimit`
   - If `CommandTimeLimit=0`, set `CommandTimeout = 0` (infinite)
   - On timeout: catch timeout exception, log, return 504
 
 **Verification:**
-- [x] Query within timeout completes normally
-- [x] Long-running query canceled at timeout threshold; returns 504
-- [x] Timeout disabled (0): query runs indefinitely
+- [ ] Query within timeout completes normally
+- [ ] Long-running query canceled at timeout threshold; returns 504
+- [ ] Timeout disabled (0): query runs indefinitely
 
 **Specification Mapping:** 5.1
 
 ---
 
-## Phase 4: HTTPS Settings (Step 4; COMPLETE & VERIFIED)
+## Phase 4: HTTPS Settings (REORDERED — Step 4; COMPLETE & VERIFIED)
 
 *Estimated: 1 day*
 
@@ -649,19 +649,19 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement PBKDF2 user authentication
 
 **Subtasks:**
-- [x] Create file: `PivotController/Core/Security/PBKDF2PasswordHasher.cs`
+- [ ] Create file: `PivotController/Core/Security/PBKDF2PasswordHasher.cs`
   - Hash(password) — PBKDF2 with 100,000 iterations, SHA-256
   - Verify(password, hash) — using constant-time comparison
-- [x] Create file: `PivotController/Core/Security/ConstantTimeComparer.cs`
+- [ ] Create file: `PivotController/Core/Security/ConstantTimeComparer.cs`
   - Compare two byte arrays in constant time (no early exit on mismatch)
-- [x] Create file: `PivotController/Security/Models/User.cs`
+- [ ] Create file: `PivotController/Security/Models/User.cs`
   - Properties: Username, PasswordHash, CreatedAt, UpdatedAt
 
 **Verification:**
-- [x] Hashed password matches spec format `PBKDF2$100000$SHA256$saltB64$hashB64`
-- [x] Verification succeeds for correct password
-- [x] Verification fails for wrong password
-- [x] Constant-time comparison prevents timing attacks
+- [ ] Hashed password matches spec format `PBKDF2$100000$SHA256$saltB64$hashB64`
+- [ ] Verification succeeds for correct password
+- [ ] Verification fails for wrong password
+- [ ] Constant-time comparison prevents timing attacks
 
 **Specification Mapping:** 7.1, 8
 
@@ -672,7 +672,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Manage users (create, update, delete, list)
 
 **Subtasks:**
-- [x] Create file: `PivotController/Security/Services/UserService.cs`
+- [ ] Create file: `PivotController/Security/Services/UserService.cs`
   - Dependencies: IIndexStore (for users.json persistence), ILogger
   - CreateAsync(username, password) — hash password, save user
   - UpdatePasswordAsync(username, newPassword) — update hash
@@ -680,18 +680,18 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
   - GetAsync(username) — load user
   - ListAsync() — all users (no password hashes)
   - VerifyAsync(username, password) — for auth
-- [x] Create file: `PivotController/Security/Controllers/SecurityController.cs`
+- [ ] Create file: `PivotController/Security/Controllers/SecurityController.cs`
   - `GET /api/security/users` — list users (401 if auth required)
   - `POST /api/security/users` — create user
   - `PUT /api/security/users/{username}` — update password
   - `DELETE /api/security/users/{username}` — delete user
 
 **Verification:**
-- [x] User created; password stored as hash
-- [x] User verified via correct password
-- [x] User not verified via wrong password
-- [x] User deleted; cannot authenticate
-- [x] List endpoint returns no password hashes
+- [ ] User created; password stored as hash
+- [ ] User verified via correct password
+- [ ] User not verified via wrong password
+- [ ] User deleted; cannot authenticate
+- [ ] List endpoint returns no password hashes
 
 **Specification Mapping:** 7.1, 7.2
 
@@ -702,21 +702,21 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement Basic Auth middleware for securing endpoints
 
 **Subtasks:**
-- [x] Create file: `PivotController/Core/Security/PivotBasicAuthMiddleware.cs`
+- [ ] Create file: `PivotController/Core/Security/PivotBasicAuthMiddleware.cs`
   - Extract Authorization header
   - Decode Base64
   - Split on first ':'
   - Verify username/password via UserService
   - Set ClaimsPrincipal or return 401 with WWW-Authenticate header
-- [x] Modify `PivotController/Program.cs`:
+- [ ] Modify `PivotController/Program.cs`:
   - Register middleware in pipeline (before UseAuthorization)
   - Gate protected endpoints with `[Authorize]` or check in controller
 
 **Verification:**
-- [x] Request without Authorization returns 401
-- [x] Request with valid credentials succeeds (200)
-- [x] Request with invalid credentials returns 401
-- [x] Disabled BasicAuth allows all requests
+- [ ] Request without Authorization returns 401
+- [ ] Request with valid credentials succeeds (200)
+- [ ] Request with invalid credentials returns 401
+- [ ] Disabled BasicAuth allows all requests
 
 **Specification Mapping:** 7.1, 15.2
 
@@ -727,18 +727,18 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Enforce AllowedOrigins configuration
 
 **Subtasks:**
-- [x] Create file: `PivotController/Core/Security/OriginValidator.cs`
+- [ ] Create file: `PivotController/Core/Security/OriginValidator.cs`
   - Build CORS policy from Security.AllowedOrigins
   - AllowedOrigins=["*"] → AllowAnyOrigin
   - Otherwise: exact match against list
-- [x] Modify `PivotController/Program.cs`:
+- [ ] Modify `PivotController/Program.cs`:
   - Register CORS middleware with OriginValidator policy
   - Reject no-Origin header when origins restricted (CSRF defense)
 
 **Verification:**
-- [x] Wildcard AllowedOrigins allows any origin
-- [x] Specific origins: allowed origin succeeds, disallowed rejected (403)
-- [x] No-Origin header rejected when restricted
+- [ ] Wildcard AllowedOrigins allows any origin
+- [ ] Specific origins: allowed origin succeeds, disallowed rejected (403)
+- [ ] No-Origin header rejected when restricted
 
 **Specification Mapping:** 7.3, 15.3
 
@@ -753,9 +753,9 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Manage report storage with expiration and quota
 
 **Subtasks:**
-- [x] Create file: `PivotController/Reports/Models/ReportMetadata.cs`
+- [ ] Create file: `PivotController/Reports/Models/ReportMetadata.cs`
   - Properties: ReportId, Name, Owner, CreatedAt, ExpiresAt, SizeBytes
-- [x] Create file: `PivotController/Reports/Services/ReportSharingService.cs`
+- [ ] Create file: `PivotController/Reports/Services/ReportSharingService.cs`
   - SaveAsync(name, owner, payload) — store report, return reportId
   - GetAsync(reportId) — retrieve report; return 410 if expired
   - DeleteAsync(reportId) — delete report
@@ -763,10 +763,10 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
   - CheckQuotaAsync() — verify folder size limit
 
 **Verification:**
-- [x] Report saved and retrieved successfully
-- [x] Expired report returns 410
-- [x] Quota check prevents save when full; returns 507
-- [x] Delete removes report
+- [ ] Report saved and retrieved successfully
+- [ ] Expired report returns 410
+- [ ] Quota check prevents save when full; returns 507
+- [ ] Delete removes report
 
 **Specification Mapping:** 8.1, 8.2, 8.3, 16.1
 
@@ -777,15 +777,15 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Auto-delete expired reports and maintain quota
 
 **Subtasks:**
-- [x] Create file: `PivotController/Reports/Services/ReportSweepWorker.cs` (BackgroundService)
+- [ ] Create file: `PivotController/Reports/Services/ReportSweepWorker.cs` (BackgroundService)
   - Runs every 5 minutes (when AutoDelete=true)
   - Remove reports where `ExpiresAt < now`
   - If quota exceeded, evict oldest until under limit
   - Log sweep results
 
 **Verification:**
-- [x] Expired reports deleted after sweep
-- [x] Quota maintained (no folder size exceed after sweep)
+- [ ] Expired reports deleted after sweep
+- [ ] Quota maintained (no folder size exceed after sweep)
 
 **Specification Mapping:** 16.2, 8.3
 
@@ -796,7 +796,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Expose report endpoints
 
 **Subtasks:**
-- [x] Create file: `PivotController/Reports/Controllers/ReportsController.cs`
+- [ ] Create file: `PivotController/Reports/Controllers/ReportsController.cs`
   - `POST /api/reportsharing/reports` — save report
     - Request: { name, owner, payload }
     - Response: 201 `{ reportId, createdAt, expiresAt, sizeBytes }`
@@ -806,10 +806,10 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
   - `DELETE /api/reportsharing/reports/{reportId}` — delete report
 
 **Verification:**
-- [x] Report saved via API
-- [x] Report retrieved via API
-- [x] Expired report returns 410
-- [x] List shows all reports
+- [ ] Report saved via API
+- [ ] Report retrieved via API
+- [ ] Expired report returns 410
+- [ ] List shows all reports
 
 **Specification Mapping:** 8.1, 8.2, 9.1
 
@@ -824,14 +824,14 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Persist JSON files safely with corruption recovery
 
 **Subtasks:**
-- [x] Create file: `PivotController/Core/Persistence/AtomicJsonStore.cs`
+- [ ] Create file: `PivotController/Core/Persistence/AtomicJsonStore.cs`
   - Save<T>(filePath, obj) — temp-file-rename pattern
   - Load<T>(filePath, defaultValue) — load with corruption handling
   - On corruption: quarantine as `{file}.corrupt.{timestamp}`; return default; log warning
 
 **Verification:**
-- [x] Save creates temp file, renames to target atomically
-- [x] Corrupt JSON quarantined; application continues with defaults
+- [ ] Save creates temp file, renames to target atomically
+- [ ] Corrupt JSON quarantined; application continues with defaults
 
 **Specification Mapping:** 11, 12.5
 
@@ -842,7 +842,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Hot-reload configuration changes from config.json
 
 **Subtasks:**
-- [x] Modify/create `PivotController/Configuration/Services/ConfigurationFileWatcher.cs`
+- [ ] Modify/create `PivotController/Configuration/Services/ConfigurationFileWatcher.cs`
   - FileSystemWatcher on `DataServer/*.json`
   - 500 ms debounce for editor writes
   - Load and validate new config
@@ -852,9 +852,9 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
   - On validation error: keep last-known-good; log error
 
 **Verification:**
-- [x] MinimumLogLevel changed in config.json; reflected in logs within 1 s
-- [x] Port changed in config.json; logged as requiresRestart
-- [x] Invalid JSON in config.json; error logged; previous config retained
+- [ ] MinimumLogLevel changed in config.json; reflected in logs within 1 s
+- [ ] Port changed in config.json; logged as requiresRestart
+- [ ] Invalid JSON in config.json; error logged; previous config retained
 
 **Specification Mapping:** 12.5
 
@@ -865,21 +865,21 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Structured logging to console and rolling file
 
 **Subtasks:**
-- [x] Create file: `PivotController/Core/Logging/RollingFileLoggerProvider.cs`
+- [ ] Create file: `PivotController/Core/Logging/RollingFileLoggerProvider.cs`
   - Logs to `logs/dataserver-{yyyyMMdd}.jsonl`
   - JSON format: { timestamp, level, category, message, correlationId, ... }
   - 30-day retention (archive/delete old files)
   - Structured fields per category
-- [x] Modify `PivotController/Program.cs`:
+- [ ] Modify `PivotController/Program.cs`:
   - ClearProviders()
   - AddConsole()
   - Add RollingFileLoggerProvider
   - Filter minimum level per config
 
 **Verification:**
-- [x] Logs written to console
-- [x] Logs written to rolling JSON file
-- [x] MinimumLogLevel filter applied (Debug records absent at Info)
+- [ ] Logs written to console
+- [ ] Logs written to rolling JSON file
+- [ ] MinimumLogLevel filter applied (Debug records absent at Info)
 
 **Specification Mapping:** 17.1
 
@@ -890,17 +890,17 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Standardized error responses per RFC 7807
 
 **Subtasks:**
-- [x] Create file: `PivotController/Core/Http/DataServerExceptionFilter.cs` (IExceptionFilter)
+- [ ] Create file: `PivotController/Core/Http/DataServerExceptionFilter.cs` (IExceptionFilter)
   - Map exceptions to HTTP status codes
   - Generate ProblemDetails with type, title, detail, status, traceId
   - Include field-level errors for validation exceptions
   - Add category and correlationId to extensions
-- [x] Register filter in Program.cs
+- [ ] Register filter in Program.cs
 
 **Verification:**
-- [x] 422 validation error returns problem details with field-level errors
-- [x] 404 not found returns problem details
-- [x] Unhandled exception returns 500 with no stack trace outside Development
+- [ ] 422 validation error returns problem details with field-level errors
+- [ ] 404 not found returns problem details
+- [ ] Unhandled exception returns 500 with no stack trace outside Development
 
 **Specification Mapping:** 11, 9.1
 
@@ -911,7 +911,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Expose configuration APIs
 
 **Subtasks:**
-- [x] Create file: `PivotController/Configuration/Controllers/ConfigController.cs`
+- [ ] Create file: `PivotController/Configuration/Controllers/ConfigController.cs`
   - `GET /api/config` — return full configuration
   - `GET /api/config/{section}` — return single section (general/dataStorage/databaseQuery/https/security/reportSharing)
   - `PUT /api/config` — merge-patch update
@@ -919,9 +919,9 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
     - On error: 422 with field errors
 
 **Verification:**
-- [x] GET /api/config returns all 7 sections + indexes
-- [x] GET /api/config/general returns only General section
-- [x] PUT /api/config merges partial update; flags requiresRestart
+- [ ] GET /api/config returns all 7 sections + indexes
+- [ ] GET /api/config/general returns only General section
+- [ ] PUT /api/config merges partial update; flags requiresRestart
 
 **Specification Mapping:** 3.1, 3.2
 
@@ -932,12 +932,12 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Liveness endpoint for monitoring
 
 **Subtasks:**
-- [x] Add `GET /health` endpoint (or use ASP.NET Core HealthChecks)
+- [ ] Add `GET /health` endpoint (or use ASP.NET Core HealthChecks)
   - Response: 200 OK if responsive
   - Can include index statuses in response
 
 **Verification:**
-- [x] GET /health returns 200
+- [ ] GET /health returns 200
 
 **Specification Mapping:** 17.2
 
@@ -952,19 +952,19 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Wire client-side sample to send index name
 
 **Subtasks:**
-- [x] Modify `Sample/pivot.js`:
+- [ ] Modify `Sample/pivot.js`:
   - Define `PIVOT_INDEX = "Sales-Data"` (or preferred index)
   - Define `PIVOT_URL = "http://localhost:5285/api/pivot/post"`
   - Pass `index: PIVOT_INDEX` in every pivot request (dataSourceSettings.index)
-- [x] (Optional) Create `Sample/config.js` for shared configuration
+- [ ] (Optional) Create `Sample/config.js` for shared configuration
   - Export window.PivotDataServer = { url, index }
-- [x] Verify `Sample/pivot.html` loads without modification
-- [x] Test: pivot table renders data from named index
+- [ ] Verify `Sample/pivot.html` loads without modification
+- [ ] Test: pivot table renders data from named index
 
 **Verification:**
-- [x] Sample/pivot.js includes index field in requests
-- [x] Pivot table loads data from specified index
-- [x] Multiple indexes can be tested by changing PIVOT_INDEX
+- [ ] Sample/pivot.js includes index field in requests
+- [ ] Pivot table loads data from specified index
+- [ ] Multiple indexes can be tested by changing PIVOT_INDEX
 
 **Specification Mapping:** 10.2, 10.3, 12.1
 
@@ -977,10 +977,10 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement factory for creating data providers by source type
 
 **Subtasks:**
-- [x] Create file: `PivotController/Data/Providers/DataSourceProviderFactory.cs`
+- [ ] Create file: `PivotController/Data/Providers/DataSourceProviderFactory.cs`
   - CreateProvider(DataSourceType) — returns IDataSourceProvider
   - Support: Json, Csv, Database (via IDatabaseQueryProvider)
-- [x] Register in DI
+- [ ] Register in DI
 
 ---
 
@@ -989,10 +989,10 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Persist and load index metadata
 
 **Subtasks:**
-- [x] Create file: `PivotController/Core/Persistence/IIndexStore.cs`
+- [ ] Create file: `PivotController/Core/Persistence/IIndexStore.cs`
   - Methods: LoadAsync(), SaveAsync()
-- [x] Implement using AtomicJsonStore
-- [x] Use for indexes.json persistence
+- [ ] Implement using AtomicJsonStore
+- [ ] Use for indexes.json persistence
 
 ---
 
@@ -1001,16 +1001,16 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement exponential backoff retry
 
 **Subtasks:**
-- [x] Create file: `PivotController/Core/Retry/RetryPolicy.cs`
+- [ ] Create file: `PivotController/Core/Retry/RetryPolicy.cs`
   - ExecuteAsync(attempts, operation, logger, ct) — transient-only retry
   - Delays: 250ms * 2^attempt + jitter ±20%
   - Catch: IOException, TimeoutException, transient DbException
   - Fail fast: ValidationException, non-transient errors
 
 **Verification:**
-- [x] Transient failure retried up to RetryAttempts
-- [x] Validation failure fails immediately
-- [x] Exponential backoff delays applied
+- [ ] Transient failure retried up to RetryAttempts
+- [ ] Validation failure fails immediately
+- [ ] Exponential backoff delays applied
 
 **Specification Mapping:** 4.1, 13.2
 
@@ -1023,60 +1023,60 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Core business logic tested in isolation
 
 **Checklist:**
-- [x] ConfigurationValidator rules
-- [x] PBKDF2 hashing and verification
-- [x] ConstantTimeComparer
-- [x] AtomicJsonStore (corrupt file handling)
-- [x] RetryPolicy (backoff, transient detection)
-- [x] OriginValidator (CORS rules)
-- [x] Quota math (report folder limits)
+- [ ] ConfigurationValidator rules
+- [ ] PBKDF2 hashing and verification
+- [ ] ConstantTimeComparer
+- [ ] AtomicJsonStore (corrupt file handling)
+- [ ] RetryPolicy (backoff, transient detection)
+- [ ] OriginValidator (CORS rules)
+- [ ] Quota math (report folder limits)
 
 ### Integration Tests (WebApplicationFactory)
 
 **Objective:** API contracts and workflows tested end-to-end
 
 **Checklist:**
-- [x] Index creation, listing, editing, deletion
-- [x] Pivot request routing by index name
-- [x] Configuration CRUD (merge-patch, validation)
-- [x] Basic Auth (401 without, 200 with credentials)
-- [x] CORS (403 for disallowed, 200 for allowed)
-- [x] Report save/retrieve/expire/delete
-- [x] Database timeout stub provider (504)
+- [ ] Index creation, listing, editing, deletion
+- [ ] Pivot request routing by index name
+- [ ] Configuration CRUD (merge-patch, validation)
+- [ ] Basic Auth (401 without, 200 with credentials)
+- [ ] CORS (403 for disallowed, 200 for allowed)
+- [ ] Report save/retrieve/expire/delete
+- [ ] Database timeout stub provider (504)
 
 ### Regression Tests
 
 **Objective:** Existing pivot functionality unaffected
 
 **Checklist:**
-- [x] fetchFieldMembers on migrated "default" index
-- [x] fetchRawData on migrated index
-- [x] Export (Excel/CSV) on routed index
-- [x] Sample/pivot.html renders without errors
+- [ ] fetchFieldMembers on migrated "default" index
+- [ ] fetchRawData on migrated index
+- [ ] Export (Excel/CSV) on routed index
+- [ ] Sample/pivot.html renders without errors
 
 ### E2E Test
 
 **Objective:** Full flow from sample to server to pivot display
 
 **Checklist:**
-- [x] Run Sample/pivot.html
-- [x] Select index "Sales-Data" (or configure in pivot.js)
-- [x] Pivot table renders data from that index
-- [x] Grouping/sorting works
-- [x] Field list shows correct fields
+- [ ] Run Sample/pivot.html
+- [ ] Select index "Sales-Data" (or configure in pivot.js)
+- [ ] Pivot table renders data from that index
+- [ ] Grouping/sorting works
+- [ ] Field list shows correct fields
 
 ### Manual Settings-File Testing (§12.5)
 
 **Objective:** Verify each Phase 1 option via JSON file editing
 
 **Checklist:**
-- [x] Edit MinimumLogLevel in config.json; verify log output changes within 1 s
-- [x] Edit Index ReloadIntervalMinutes; verify auto-reload triggers at interval
-- [x] Edit CSV delimiter; verify data reloads with new separator
-- [x] Edit Mapping enabled/disabled; verify field types change
-- [x] Edit BasicAuthEnabled; verify auth required/bypassed
-- [x] Edit AllowedOrigins; verify CORS policy changes
-- [x] Edit ReportExpirationTimeMinutes; verify old reports expire
+- [ ] Edit MinimumLogLevel in config.json; verify log output changes within 1 s
+- [ ] Edit Index ReloadIntervalMinutes; verify auto-reload triggers at interval
+- [ ] Edit CSV delimiter; verify data reloads with new separator
+- [ ] Edit Mapping enabled/disabled; verify field types change
+- [ ] Edit BasicAuthEnabled; verify auth required/bypassed
+- [ ] Edit AllowedOrigins; verify CORS policy changes
+- [ ] Edit ReportExpirationTimeMinutes; verify old reports expire
 
 ---
 
@@ -1135,11 +1135,11 @@ Phase 8 (Final) → depends on Phase 1, 7
 
 Before proceeding with Phase 1, confirm:
 
-- [x] All specification documents approved (EXPLORATION, proposal, design, spec.md)
-- [x] All OpenSpec artifacts reviewed and signed off
-- [x] Resources allocated (developer, reviewer, QA)
-- [x] Timeline (10-15 business days) acceptable
-- [x] This tasks.md document reviewed and acknowledged
+- [ ] All specification documents approved (EXPLORATION, proposal, design, spec.md)
+- [ ] All OpenSpec artifacts reviewed and signed off
+- [ ] Resources allocated (developer, reviewer, QA)
+- [ ] Timeline (10-15 business days) acceptable
+- [ ] This tasks.md document reviewed and acknowledged
 
 **Implementation Begins:** Upon approval above
 
