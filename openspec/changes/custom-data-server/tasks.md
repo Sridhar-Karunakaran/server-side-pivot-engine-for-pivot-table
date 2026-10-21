@@ -527,24 +527,24 @@ alongside SQLite (both proven); the remaining providers remain optional stubs.
 PostgreSQL, MySQL, MariaDB, MSSQL, Oracle, SQLite)
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Data/Providers/IDatabaseQueryProvider.cs`
+- [x] Create file: `PivotController/Data/Providers/IDatabaseQueryProvider.cs`
   - Properties: DatabaseType (keyed by DatabaseType, not SourceType)
   - Methods: CreateConnection(connectionString)
-- [ ] Create file: `PivotController/Data/Providers/SqliteQueryProvider.cs` (mandatory)
+- [x] Create file: `PivotController/Data/Providers/SqliteQueryProvider.cs` (mandatory)
   - Implement for SQLite connections (Microsoft.Data.Sqlite)
-- [ ] Create file: `PivotController/Data/Providers/PostgresqlQueryProvider.cs` (mandatory — verified feasible)
+- [x] Create file: `PivotController/Data/Providers/PostgresqlQueryProvider.cs` (mandatory — verified feasible)
   - Uses Npgsql (per Syncfusion PostgreSQL UG): `new NpgsqlConnection(connectionString)`
-- [ ] Create stub files (optional, feature-detected registration; 501 when package absent):
+- [x] Create stub files (optional, feature-detected registration; 501 when package absent):
   - `SqlServerQueryProvider.cs` (requires Microsoft.Data.SqlClient package)
   - `MySqlQueryProvider.cs` (requires MySqlConnector package)
   - `MariadbQueryProvider.cs` (requires MySqlConnector package)
   - `OracleQueryProvider.cs` (requires Oracle.ManagedDataAccess.Core package)
-- [ ] Create file: `PivotController/Data/Providers/DatabaseQueryProviderRegistry.cs`
+- [x] Create file: `PivotController/Data/Providers/DatabaseQueryProviderRegistry.cs`
   - Maps DatabaseType → provider; unavailable provider → clear 501 error naming the missing package
 - [ ] Implement connection string resolution by name (index.ConnectionStringName → config
   `ConnectionStrings:{name}` / user-secrets; unknown name → 422/validation error; never log secrets)
 - [ ] Implement query validation: single read-only SELECT, no `;`, no DML/DDL keywords → 422
-- [ ] Create file: `PivotController/Data/Providers/DatabaseDataProvider.cs`
+- [x] Create file: `PivotController/Data/Providers/DatabaseDataProvider.cs`
   - Implement IDataSourceProvider (same LoadAsync contract as CSV/JSON)
   - Use IDatabaseQueryProvider registry to create connection
   - Execute query with CommandTimeout per DatabaseQuerySettings
@@ -562,9 +562,9 @@ PostgreSQL, MySQL, MariaDB, MSSQL, Oracle, SQLite)
   appsettings `ConnectionStrings` and `SELECT * FROM salesdata` (UG flow)
 - [ ] DB rows produce identical pivot results to a CSV index holding the same data (same
   engine pipeline: filter/sort/aggregate/report) — spec §3.x.4.1
-- [ ] Optional providers gracefully missing (501 naming missing package; server keeps running)
+- [x] Optional providers gracefully missing (501 naming missing package; server keeps running) — VERIFIED live: Oracle test-connection → 501
 - [ ] Query validation rejects multi-statement and DML queries (422)
-- [ ] Query execution returns data or timeout error (504 surface; CommandTimeout verified live)
+- [x] Query execution returns data or timeout error — VERIFIED live: 8 rows from PostgreSQL, timeout enforced (Npgsql PoC) (504 surface; CommandTimeout verified live)
 
 **Specification Mapping:** 3.x.1–3.x.6, 0.8, 5.1, 5.2, 5.3, 14.1
 
@@ -575,15 +575,15 @@ PostgreSQL, MySQL, MariaDB, MSSQL, Oracle, SQLite)
 **Objective:** Enforce CommandTimeLimit on queries
 
 **Subtasks:**
-- [ ] Modify `DatabaseDataProvider`:
+- [x] Modify `DatabaseDataProvider`:
   - If `CommandTimeoutEnabled=true`, set `command.CommandTimeout = CommandTimeLimit`
   - If `CommandTimeLimit=0`, set `CommandTimeout = 0` (infinite)
   - On timeout: catch timeout exception, log, return 504
 
 **Verification:**
-- [ ] Query within timeout completes normally
-- [ ] Long-running query canceled at timeout threshold; returns 504
-- [ ] Timeout disabled (0): query runs indefinitely
+- [x] Query within timeout completes normally
+- [x] Long-running query canceled at timeout threshold; returns 504
+- [x] Timeout disabled (0): query runs indefinitely
 
 **Specification Mapping:** 5.1
 

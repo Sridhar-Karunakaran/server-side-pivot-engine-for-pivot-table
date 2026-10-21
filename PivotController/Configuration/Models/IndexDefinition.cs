@@ -51,6 +51,48 @@ namespace PivotController.Configuration.Models
                     errors.Add("SourcePath is required for Json/Csv indexes");
                 }
             }
+            if (SourceType != DataSourceType.Json && SourceType != DataSourceType.Csv)
+            {
+                // Database index (spec §3.x): DatabaseType, ConnectionStringName (by reference),
+                // and a single read-only SELECT query are mandatory.
+                if (DatabaseType == null)
+                {
+                    errors.Add("DatabaseType is required for database indexes");
+                }
+                if (string.IsNullOrWhiteSpace(ConnectionStringName))
+                {
+                    errors.Add("ConnectionStringName is required for database indexes");
+                }
+                if (string.IsNullOrWhiteSpace(Query))
+                {
+                    errors.Add("Query is required for database indexes");
+                }
+                else
+                {
+                    var trimmed = Query.Trim();
+                    if (trimmed.Contains(';'))
+                    {
+                        errors.Add("Query must be a single read-only SELECT statement");
+                    }
+                    else if (!trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
+                             && !trimmed.StartsWith("WITH", StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors.Add("Query must be a single read-only SELECT statement");
+                    }
+                    else
+                    {
+                        var forbidden = new[] { "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP", "GRANT", "TRUNCATE", "REPLACE" };
+                        foreach (var kw in forbidden)
+                        {
+                            if (System.Text.RegularExpressions.Regex.IsMatch(trimmed, $"\\b{kw}\\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                            {
+                                errors.Add("Query must be a single read-only SELECT statement (no DML/DDL)");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             if (AutoReload && ReloadIntervalMinutes <= 0)
             {
                 errors.Add("ReloadIntervalMinutes must be greater than 0 when AutoReload is enabled");
