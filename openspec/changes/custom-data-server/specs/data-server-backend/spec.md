@@ -873,6 +873,25 @@ verifies only that the certificate can actually serve TLS.
 
 ---
 
+
+### 4.6 Implemented Code Reference (Step 4 — as shipped)
+
+| Concern | File / Member |
+|---|---|
+| Settings model | `PivotController/Configuration/Models/HttpsSettings.cs` — `Enabled`, `PfxPath`, `PfxPassword` (never persisted/returned), `PemCertPath`, `PemKeyPath`, `StoreLocation`, `StoreName`, `Thumbprint`, `SubjectName`, `Protocols`, `ConfiguredSourceCount`, `Sanitized()` |
+| Certificate resolution | `PivotController/Configuration/Services/CertificateService.cs` — `ResolveCertificate` (PFX → PEM → store), `Validate` (source XOR rules), `ResolveValidatedCertificate`/`TryResolveValidatedCertificate` (loadability: private key only), `MapProtocols`, `LoadPemCertificate` (fullchain; Windows in-memory PFX key normalization with safe fallback) |
+| Store lookup | `CertificateService.ResolveCertificate` store branch — cross-platform `X509Store` (OpenSSL on Linux/macOS), `CurrentUser` ↔ `LocalMachine` fallback, key-less entries skipped, detailed miss errors |
+| Settings service | `PivotController/Configuration/Services/HttpsSettingsService.cs` — merge-patch (explicit-null clears, omission unchanged), `https.json` persistence (sanitized), `LoadPersisted`, PUT-time loadability check (422) |
+| API | `PivotController/Configuration/Controllers/HttpsConfigController.cs` — `GET /api/config/https` (no password), `PUT` merge-patch + 422 validation |
+| Kestrel wiring | `PivotController/Program.cs` — pre-Build https.json load (guarded precedence + loud log), fail-fast `Validate`, `ConfigureKestrel` → `Listen(Any, General:Port)` + `UseHttps(cert)` + `SslProtocols = Tls12 \| Tls13` + `MapProtocols`; `UseHttpsRedirection` only when enabled; graceful HTTP-only degradation on unloadable certs |
+| Test PKI | `PivotController/Cert/PEM-Cert/` — `test-ca.pem` (CA:TRUE, import into client Trusted Root), `test-ca.key`, `server.pem` (CA-signed SAN leaf), `server.key`, `localhost-server-fullchain.pem` (leaf + CA, what the server serves) |
+| Verification | `PivotController/verify-https.sh` (33 checks), live store/pem/pfx end-to-end runs; tunnel samples `wwwroot/tunnel-completed.html`, `https-tunnel-simple.html`, `https-tunnel-sample.html`, `data-server.html` (EJ2 35.1.37, `Pivot.Engine` 35.1.41) |
+
+Key resolution order (`ResolveCertificate`): PFX path → PEM pair → store (`thumbprint` XOR `subjectName`, location fallback) → error "no certificate source configured".
+
+Startup (`Program.cs`): appsettings `Https:*` → guarded `https.json` merge (non-null wins; `enabled:true` only; enums always) → `Validate` fail-fast → `TryResolveValidatedCertificate` (loadability) → HTTPS listener or documented HTTP-only degradation.
+
+
 ## 5. Security Settings Configuration (STEP 6)
 
 ### 5.1 Configuration Model
