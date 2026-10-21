@@ -59,15 +59,22 @@ var httpsStore = new AtomicJsonStore(Microsoft.Extensions.Logging.LoggerFactory.
 if (System.IO.File.Exists(httpsPersistedPath))
 {
     var httpsPersisted = httpsStore.Load<HttpsSettings>(httpsPersistedPath, new HttpsSettings());
-    httpsSettings.Enabled = httpsPersisted.Enabled;
-    httpsSettings.PfxPath = httpsPersisted.PfxPath;
-    httpsSettings.PemCertPath = httpsPersisted.PemCertPath;
-    httpsSettings.PemKeyPath = httpsPersisted.PemKeyPath;
+    // https.json is the persisted source of truth (restart-required changes set via the API).
+    // Explicit nulls in it must NOT wipe appsettings values (user's config style writes nulls
+    // for unused fields); a stored Enabled=false from an old run must not silently kill a
+    // newly-enabled appsettings config. Log loudly — silent precedence has caused false
+    // "HTTP instead of HTTPS" reports.
+    Console.WriteLine($"HTTPS: https.json found at {httpsPersistedPath}; its values override appsettings.json 'Https'. Delete the file to configure via appsettings.json only.");
+    if (httpsPersisted.Enabled) httpsSettings.Enabled = true;
+    if (httpsPersisted.PfxPath != null) httpsSettings.PfxPath = httpsPersisted.PfxPath;
+    if (httpsPersisted.PemCertPath != null) httpsSettings.PemCertPath = httpsPersisted.PemCertPath;
+    if (httpsPersisted.PemKeyPath != null) httpsSettings.PemKeyPath = httpsPersisted.PemKeyPath;
+    // Enums are always written by the API (never null) — always authoritative.
     httpsSettings.StoreLocation = httpsPersisted.StoreLocation;
-    httpsSettings.StoreName = httpsPersisted.StoreName;
-    httpsSettings.Thumbprint = httpsPersisted.Thumbprint;
-    httpsSettings.SubjectName = httpsPersisted.SubjectName;
     httpsSettings.Protocols = httpsPersisted.Protocols;
+    if (!string.IsNullOrWhiteSpace(httpsPersisted.StoreName)) httpsSettings.StoreName = httpsPersisted.StoreName;
+    if (httpsPersisted.Thumbprint != null) httpsSettings.Thumbprint = httpsPersisted.Thumbprint;
+    if (httpsPersisted.SubjectName != null) httpsSettings.SubjectName = httpsPersisted.SubjectName;
 }
 builder.Services.AddSingleton(httpsSettings);
 builder.Services.AddSingleton<CertificateService>();
