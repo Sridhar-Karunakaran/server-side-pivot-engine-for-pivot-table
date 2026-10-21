@@ -59,28 +59,23 @@ namespace PivotController.Controllers
                 ?? HttpContext.Request.Query["index"].FirstOrDefault()
                 ?? ServerIndexName;
             // Report Sharing (Step 6): auto-store the client's report configuration on
-            // every pivot request when the endpoint is enabled. Never blocks the pivot
-            // response — auto-save failures are logged, not returned to the client.
+            // every pivot request when the endpoint is enabled. The stored report uses
+            // the CLIENT-side structure (camelCase dataSourceSettings, string enums,
+            // no internalProperties) so it matches what a client would configure
+            // (spec §6.3.1, user direction). Never blocks the pivot response —
+            // auto-save failures are logged, not returned to the client.
             if (_reportSharing.EndpointEnabled)
             {
                 try
                 {
+                    var clientReportJson = Reports.Services.ClientReportBuilder.Build(param.DataSourceSettings);
                     var (saveResult, _) = _reportSharing.Save(
                         name: $"pivot-{indexName}",
                         owner: HttpContext.Connection.RemoteIpAddress?.ToString() ?? "client",
-                        payloadJson: JsonConvert.SerializeObject(new
-                        {
-                            index = indexName,
-                            dataSourceSettings = param.DataSourceSettings,
-                            internalProperties = new
-                            {
-                                param.InternalProperties?.EnableVirtualization,
-                                param.InternalProperties?.Locale
-                            }
-                        }));
-                    if (saveResult == Reports.Services.ReportSharingService.SaveResult.Saved)
+                        payloadJson: clientReportJson);
+                    if (saveResult != Reports.Services.ReportSharingService.SaveResult.Saved)
                     {
-                        // Nothing to surface — auto-save is server-side bookkeeping.
+                        System.Console.WriteLine($"ReportSharing auto-save skipped ({saveResult}) for index '{indexName}'.");
                     }
                 }
                 catch (Exception ex)

@@ -2,6 +2,8 @@ using Microsoft.Extensions.Logging;
 using Newtonsoft.Json.Linq;
 using PivotController.Configuration.Models;
 using PivotController.Configuration.Services;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using PivotController.Core.Persistence;
 using PivotController.Reports.Models;
 
@@ -152,7 +154,6 @@ namespace PivotController.Reports.Services
 
         // ---- Report lifecycle ----
 
-        private string MetaPath(string reportId) => System.IO.Path.Combine(ReportsFolderPath, $"{reportId}.meta.json");
         private string PayloadPath(string reportId) => System.IO.Path.Combine(ReportsFolderPath, $"{reportId}.json");
 
         /// <summary>Result of SaveAsync so the controller can map it to 201/404/507.</summary>
@@ -172,17 +173,17 @@ namespace PivotController.Reports.Services
                 {
                     return (SaveResult.EndpointDisabled, null);
                 }
-                // Opaque blob: only JSON validity is checked (spec §6.3.1).
+                // Opaque blob: only JSON validity is checked (structure not validated).
+                JToken? reportToken;
                 try
                 {
-                    _ = JToken.Parse(payloadJson);
+                    using var doc = System.Text.Json.JsonDocument.Parse(payloadJson);
+                    reportToken = JToken.Parse(payloadJson);
                 }
-                catch (Exception)
+                catch
                 {
                     return (SaveResult.InvalidPayload, null);
                 }
-
-                Directory.CreateDirectory(ReportsFolderPath);
                 var sizeBytes = System.Text.Encoding.UTF8.GetByteCount(payloadJson);
 
                 if (_settings.MaxSizeOfFolder > 0)
@@ -206,7 +207,6 @@ namespace PivotController.Reports.Services
                             }
                             if (current + sizeBytes > quotaBytes)
                             {
-                                // Everything evicted and the new report still does not fit.
                                 return (SaveResult.QuotaExceeded, null);
                             }
                         }
@@ -218,9 +218,10 @@ namespace PivotController.Reports.Services
                     }
                 }
 
+                var reportId = Guid.NewGuid().ToString();
                 var meta = new ReportMetadata
                 {
-                    ReportId = Guid.NewGuid().ToString(),
+                    ReportId = reportId,
                     Name = name,
                     Owner = owner,
                     CreatedAt = DateTime.UtcNow,
@@ -229,9 +230,20 @@ namespace PivotController.Reports.Services
                         : null,
                     SizeBytes = sizeBytes
                 };
-
-                File.WriteAllText(PayloadPath(meta.ReportId), payloadJson);
-                WriteMeta(meta);
+                // Single JSON file per report (user direction): metadata + client-side
+                // report in one {reportId}.json — no separate .meta.json sidecar.
+                var file = new ReportFile
+                {
+                    ReportId = meta.ReportId,
+                    Name = meta.Name,
+                    Owner = meta.Owner,
+                    CreatedAt = meta.CreatedAt,
+                    ExpiresAt = meta.ExpiresAt,
+                    SizeBytes = meta.SizeBytes,
+                    Report = reportToken
+                };
+                var store = new AtomicJsonStore(LoggerFactory.Create(b => { }).CreateLogger<AtomicJsonStore>());
+                store.Save(PayloadPath(reportId), file);
                 _logger.LogInformation("Report saved: {ReportId} ('{Name}', {SizeBytes} bytes, expires {Expires}).",
                     meta.ReportId, meta.Name, meta.SizeBytes, meta.ExpiresAt?.ToString("O") ?? "never");
                 return (SaveResult.Saved, meta);
@@ -249,24 +261,21 @@ namespace PivotController.Reports.Services
                 {
                     return (GetResult.EndpointDisabled, null, null);
                 }
-                var meta = ReadMeta(reportId);
-                if (meta == null)
+                var file = ReadReportFile(reportId);
+                if (file == null)
                 {
                     return (GetResult.NotFound, null, null);
                 }
-                if (meta.ExpiresAt.HasValue && meta.ExpiresAt.Value < DateTime.UtcNow)
+                if (file.ExpiresAt.HasValue && file.ExpiresAt.Value < DateTime.UtcNow)
                 {
-                    return (GetResult.Expired, meta, null);
+                    return (GetResult.Expired, ToMetadata(file), null);
                 }
-                if (!File.Exists(PayloadPath(reportId)))
-                {
-                    return (GetResult.NotFound, null, null);
-                }
-                return (GetResult.Ok, meta, File.ReadAllText(PayloadPath(reportId)));
+                var payload = file.Report?.ToString(Formatting.None) ?? "{}";
+                return (GetResult.Ok, ToMetadata(file), payload);
             }
         }
 
-        /// <summary>Lists report metadata (spec §6.3.3); expired reports are reported as expired but listed.</summary>
+        /// <summary>Lists report metadata (spec §6.3.3).</summary>
         public List<ReportMetadata> List()
         {
             lock (_sync)
@@ -285,7 +294,7 @@ namespace PivotController.Reports.Services
                 {
                     return DeleteResult.EndpointDisabled;
                 }
-                if (!File.Exists(MetaPath(reportId)))
+                if (!File.Exists(PayloadPath(reportId)))
                 {
                     return DeleteResult.NotFound;
                 }
@@ -352,49 +361,56 @@ namespace PivotController.Reports.Services
                 return result;
             }
             var store = new AtomicJsonStore(LoggerFactory.Create(b => { }).CreateLogger<AtomicJsonStore>());
-            foreach (var file in Directory.EnumerateFiles(ReportsFolderPath, "*.meta.json"))
+            foreach (var file in Directory.EnumerateFiles(ReportsFolderPath, "*.json"))
             {
-                var meta = store.Load<ReportMetadata>(file, new ReportMetadata());
-                if (meta != null && !string.IsNullOrEmpty(meta.ReportId))
+                if (file.EndsWith(".meta.json", StringComparison.OrdinalIgnoreCase))
                 {
-                    result.Add(meta);
+                    continue; // legacy sidecar files are ignored (single-file format now)
+                }
+                var report = store.Load<ReportFile>(file, new ReportFile());
+                if (report != null && !string.IsNullOrEmpty(report.ReportId))
+                {
+                    result.Add(ToMetadata(report));
                 }
             }
             return result;
         }
 
-        private ReportMetadata? ReadMeta(string reportId)
+        private ReportFile? ReadReportFile(string reportId)
         {
-            var path = MetaPath(reportId);
+            var path = PayloadPath(reportId);
             if (!File.Exists(path))
             {
                 return null;
             }
             var store = new AtomicJsonStore(LoggerFactory.Create(b => { }).CreateLogger<AtomicJsonStore>());
-            return store.Load<ReportMetadata>(path, new ReportMetadata());
+            return store.Load<ReportFile>(path, new ReportFile());
         }
 
-        private void WriteMeta(ReportMetadata meta)
+        private static ReportMetadata ToMetadata(ReportFile file) => new()
         {
-            var store = new AtomicJsonStore(LoggerFactory.Create(b => { }).CreateLogger<AtomicJsonStore>());
-            store.Save(MetaPath(meta.ReportId), meta);
-        }
+            ReportId = file.ReportId,
+            Name = file.Name,
+            Owner = file.Owner,
+            CreatedAt = file.CreatedAt,
+            ExpiresAt = file.ExpiresAt,
+            SizeBytes = file.SizeBytes
+        };
 
         private void DeleteNoLock(string reportId)
         {
-            foreach (var path in new[] { PayloadPath(reportId), MetaPath(reportId) })
+            var path = PayloadPath(reportId);
+            if (File.Exists(path))
             {
-                if (File.Exists(path))
+                try { File.Delete(path); }
+                catch (Exception ex)
                 {
-                    try { File.Delete(path); } catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, "Failed to delete report file '{Path}'.", path);
-                    }
+                    _logger.LogWarning(ex, "Failed to delete report file '{Path}'.", path);
                 }
             }
         }
 
-        /// <summary>Total size in bytes of all report payload + metadata files.</summary>
+        /// <summary>Total size in bytes of all report files in the reports folder.</summary>
         public long FolderSizeBytes()
         {
             if (!Directory.Exists(ReportsFolderPath))
