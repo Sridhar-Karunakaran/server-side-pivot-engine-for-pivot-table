@@ -16,12 +16,21 @@
 | 2 | §1 General Settings | ✅ Implemented & verified | All scenarios verified live; see deltas below |
 | 3 | §2 Data Storage Settings | ✅ Implemented & verified | CacheSizeLimit aligned with Flexmonster semantics; see deltas below |
 | 4 | §4 HTTPS Settings | ✅ Implemented & verified (COMPLETE) | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; HTTP/1 & HTTP/2 negotiation; merge-patch API; https.json precedence hardened; test PKI shipped (Cert/PEM-Cert/); verify-https.sh 33 checks; see deltas below |
-| 5 | §5 Security Settings | ⬜ Not started | Basic Auth via Authorization.Enabled + CORS via AllowOrigin; credentials in Data Server config (Admin Panel later) |
+| 5 | §5 Security Settings | ✅ Implemented & verified (COMPLETE) | Basic Auth (Authorization.Enabled + Data Server credentials) + CORS (AllowOrigin; specific origins required when auth enabled, never '*', fail-fast at startup, 422 via API); see deltas below |
 | 6 | §6 Report Sharing | ⬜ Not started | Report storage/expiration/quota |
 | 7 | §3 Database Query | ⬜ Not started | SQLite-only provider (mandatory); future providers incremental |
 | 8 | §7 Client-Side Integration | ⬜ Not started | Sample sends index via `?index=` query |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
+
+**Step 5 — Security Settings (COMPLETE — supersedes earlier §5 wording)**
+- Schema is the clarified appsettings structure: `Security: { Authorization: { Enabled, Username, Password }, CORS: { AllowOrigin } }`. Credentials are created in the Data Server configuration (appsettings.json) for now — Admin Panel later (Phase 2); they are never settable via the API, never persisted to `{DataFolder}/security.json`, and never returned by `GET /api/config/security`.
+- **AllowOrigin rule (Flexmonster UG)**: when `Authorization.Enabled=true`, AllowOrigin must specify proper origin URLs (absolute `http://`/`https://` with host; several origins comma-separated) — never `*` and never missing. Violations: (a) startup does not start (exit 1, clear message — applies to appsettings.json AND a persisted security.json whose Enabled/AllowOrigin override appsettings pre-validation); (b) `PUT /api/config/security` returns 422; (c) a persisted security.json enabling auth with an invalid AllowOrigin is ignored on reload (appsettings kept, warning logged).
+- Origins are compared **exactly as configured** — the earlier trailing-slash normalization was removed per user direction; canonical form has no trailing slash (e.g. `http://localhost:4000`).
+- `Authorization.Enabled=false` lifts all AllowOrigin restrictions: `*` (default), single URL, or comma-separated URLs are all accepted.
+- BasicAuth middleware protects all `/api/*` paths (including `/api/pivot/post`); static files (wwwroot) are not protected. CORS preflight OPTIONS requests are exempt from Basic Auth (browsers send them without credentials) and `UseCors` runs before the auth middleware so browsers can preflight.
+- Auth applies immediately via the API (no restart): disable → requests pass without a header; re-enable → 401 again. Startup validation fails fast when Enabled without credentials.
+- Native ASP.NET Core CORS behavior (3.G.2): disallowed origins receive no CORS headers and are blocked by the browser; no server-side 403.
 
 **Step 4 — HTTPS Settings (COMPLETE — supersedes all earlier deltas for this step)**
 - `https.json` (in `{DataFolder}`) is the persisted source of truth written by `PUT /api/config/https`. **Precedence hardened**: non-null https.json fields override appsettings.json; **null fields never wipe appsettings values**; a stored `enabled:false` cannot disable an appsettings-enabled config; the override is logged loudly at startup.
@@ -894,7 +903,7 @@ Key resolution order (`ResolveCertificate`): PFX path → PEM pair → store (`t
 Startup (`Program.cs`): appsettings `Https:*` → guarded `https.json` merge (non-null wins; `enabled:true` only; enums always) → `Validate` fail-fast → `TryResolveValidatedCertificate` (loadability) → HTTPS listener or documented HTTP-only degradation.
 
 
-## 5. Security Settings Configuration (STEP 5)
+## 5. Security Settings Configuration (STEP 5) (IMPLEMENTED & VERIFIED)
 
 **Schema (clarified):** Security settings follow the appsettings.json structure below.
 Credentials (username/password) are created in the Data Server configuration for now;
@@ -989,11 +998,30 @@ value as-is (configure origins without a trailing slash, e.g. `http://localhost:
 - When: Request with wrong credentials
 - Then: Returns 401 with `WWW-Authenticate: Basic realm`
 
-**Scenario 5.2.5: Enabled Without Credentials**
+**Scenario 5.2.8: Enabled Without Credentials — Startup Failure**
 - Given: `authorization.enabled: true`, no username/password in Data Server config
 - When: Application starts
-- Then: Startup fails fast with a clear message (or auth disabled with loud log) —
+- Then: **Server does not start** (non-zero exit) with a clear message —
   credentials must be created in the Data Server configuration (Admin Panel later)
+
+**Scenario 5.2.9: Startup Failure From Persisted security.json**
+- Given: `{DataFolder}/security.json` enables Authorization with AllowOrigin missing,
+  `"*"`, or a non-URL value
+- When: Application starts
+- Then: **Server does not start**; the persisted Enabled/AllowOrigin override is
+  applied before validation, so an invalid persisted state also fails startup
+
+**Scenario 5.2.10: API Rejection (PUT /api/config/security)**
+- Given: Authorization currently enabled
+- When: `PUT /api/config/security { authorization: { enabled: true }, cors: { allowOrigin: "*" } }`
+  (or missing/empty/non-URL allowOrigin)
+- Then: Returns 422 with the AllowOrigin rule error; settings unchanged
+
+**Scenario 5.2.11: CORS Preflight Exemption**
+- Given: Authorization enabled
+- When: Browser sends a CORS preflight OPTIONS request (no Authorization header)
+- Then: Preflight is answered with CORS headers (204) — preflights never require
+  Basic credentials; only actual requests (GET/POST/...) require them
 
 ### 5.3 CORS Origin Validation
 
