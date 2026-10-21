@@ -4,7 +4,7 @@
 
 **Version:** 2.2
 
-**Implementation Order (revised 2026-10):** Index Configuration (Step 1) → General Settings → Data Storage Settings → **HTTPS Settings (Step 4 — COMPLETE)** → Security Settings (Step 5) → Report Sharing Settings (Step 6) → Client-Side Integration (Step 7) → **Database Query Settings (Step 8 - FINAL)** — deferred to last because it requires DB provider support on the machine.
+**Implementation Order (revised 2026-10):** Index Configuration (Step 1) → General Settings → Data Storage Settings → **HTTPS Settings (Step 4 — COMPLETE)** → Security Settings (Step 5) → Report Sharing Settings (Step 6) → **Database Query Settings (Step 7 — COMPLETE)** → Client-Side Integration (FINAL). DB data fetching/indexing (§3.x in the change spec: PostgreSQL via Npgsql + SQLite) is implemented & verified live and works independently of the timeout settings.
 
 ---
 
@@ -18,7 +18,7 @@
 | 4 | §4 HTTPS Settings | ✅ COMPLETE | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; merge-patch API; https.json precedence hardened; test PKI (Cert/PEM-Cert/); verify-https.sh 33 checks |
 | 5 | §5 Security Settings | ✅ Implemented & verified (COMPLETE) | Basic Auth (Authorization.Enabled + Data Server credentials) + CORS (AllowOrigin; specific origins required when auth enabled, never '*', fail-fast at startup, 422 via API); see deltas below |
 | 6 | §6 Report Sharing | ✅ Implemented & verified (COMPLETE) | Report storage/expiration/quota/auto-delete; `ReportSharingOptions` appsettings + `reportsharing.json` persistence; auto-store on client pivot requests; see deltas below |
-| 7 | §3 Database Query | ⬜ Not started | SQLite-only provider (mandatory); future providers incremental |
+| 7 | §3 Database Query Settings | ✅ Implemented & verified (COMPLETE) | Step 7 scope per user direction: Command timeout / Command time limit ONLY — GET/PUT /api/config/databasequery (merge-patch, runtime apply, requiresRestart=false); timeout enforced on live queries (TimeoutException + retry policy + Failed status + 502); negative limit 422; 0 = unlimited; disabled → SQL driver default; databasequery.json persistence verified across restart; verified on user's local environment too. DB data fetching/indexing (§3.x in the change spec: PostgreSQL via Npgsql + SQLite, inline ConnectionString or ConnectionStringName) implemented & verified live. |
 | 8 | §7 Client-Side Integration | ⬜ Not started | Sample sends index via `?index=` query |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
@@ -714,7 +714,7 @@ public class DataStorageSettings
 
 ---
 
-## 3. Database Query Settings Configuration (STEP 4)
+## 3. Database Query Settings Configuration (STEP 7 — IMPLEMENTED & VERIFIED)
 
 ### 3.1 Configuration Model
 

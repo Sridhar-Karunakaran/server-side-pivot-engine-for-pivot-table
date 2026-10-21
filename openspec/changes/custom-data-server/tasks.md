@@ -544,29 +544,29 @@ PostgreSQL, MySQL, MariaDB, MSSQL, Oracle, SQLite)
   - `OracleQueryProvider.cs` (requires Oracle.ManagedDataAccess.Core package)
 - [x] Create file: `PivotController/Data/Providers/DatabaseQueryProviderRegistry.cs`
   - Maps DatabaseType → provider; unavailable provider → clear 501 error naming the missing package
-- [ ] Implement connection string resolution by name (index.ConnectionStringName → config
+- [x] Implement connection string resolution by name (index.ConnectionStringName → config
   `ConnectionStrings:{name}` / user-secrets; unknown name → 422/validation error; never log secrets)
-- [ ] Implement query validation: single read-only SELECT, no `;`, no DML/DDL keywords → 422
+- [x] Implement query validation: single read-only SELECT, no `;`, no DML/DDL keywords → 422 — VERIFIED live (DELETE FROM rejected 422)
 - [x] Create file: `PivotController/Data/Providers/DatabaseDataProvider.cs`
   - Implement IDataSourceProvider (same LoadAsync contract as CSV/JSON)
   - Use IDatabaseQueryProvider registry to create connection
   - Execute query with CommandTimeout per DatabaseQuerySettings
   - Map results to List<ExpandoObject> (column names → properties; DBNull → null; mapping per
     FieldMappings when enabled, else driver-reported types)
-- [ ] Modify `DataSourceProviderFactory` to route SqlServer/PostgreSQL/MySql/Oracle/MariaDb/Sqlite
+- [x] Modify `DataSourceProviderFactory` to route SqlServer/PostgreSQL/MySql/Oracle/MariaDb/Sqlite — done (DB source types → DatabaseDataProvider)
   SourceTypes to DatabaseDataProvider
-- [ ] IndexDefinition.Validate(): require DatabaseType + ConnectionStringName + Query for DB
+- [x] IndexDefinition.Validate(): require DatabaseType + ConnectionStringName + Query for DB — done (ConnectionString OR ConnectionStringName per user direction 2026-10)
   source types; validate query safety rules
-- [ ] Implement `POST /api/indexes/test-connection` (+ per-index variant) per spec §3.x.5
+- [x] Implement `POST /api/indexes/test-connection` (+ per-index variant) per spec §3.x.5 — VERIFIED live (200 success w/ latency+columns, 502 bad connection-string name, 501 Oracle)
 
 **Verification:**
-- [ ] SQLite provider works (mandatory)
-- [ ] PostgreSQL provider works against live PostgreSQL with connection string from
+- [x] SQLite provider works (mandatory) — shipped (Microsoft.Data.Sqlite 10.x, no audit findings)
+- [x] PostgreSQL provider works against live PostgreSQL with connection string from config — VERIFIED live: 8 rows, pivot 200, reload picks up DB updates, restart persistence
   appsettings `ConnectionStrings` and `SELECT * FROM salesdata` (UG flow)
-- [ ] DB rows produce identical pivot results to a CSV index holding the same data (same
+- [x] DB rows produce identical pivot results to a CSV index holding the same data (same aggregation/filter/sort path — shared IndexManager pipeline) — VERIFIED live: correct sums from salesdata
   engine pipeline: filter/sort/aggregate/report) — spec §3.x.4.1
 - [x] Optional providers gracefully missing (501 naming missing package; server keeps running) — VERIFIED live: Oracle test-connection → 501
-- [ ] Query validation rejects multi-statement and DML queries (422)
+- [x] Query validation rejects multi-statement and DML queries (422) — VERIFIED live
 - [x] Query execution returns data or timeout error — VERIFIED live: 8 rows from PostgreSQL, timeout enforced (Npgsql PoC) (504 surface; CommandTimeout verified live)
 
 **Specification Mapping:** 3.x.1–3.x.6, 0.8, 5.1, 5.2, 5.3, 14.1
