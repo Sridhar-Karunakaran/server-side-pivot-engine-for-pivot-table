@@ -102,15 +102,37 @@ builder.Services.AddSwaggerGen();
 // Persisted security.json (written by PUT /api/config/security) overrides the
 // Enabled/AllowOrigin appsettings values; credentials are never persisted to disk.
 var securitySettings = builder.Configuration.GetSection(SecuritySettings.SectionName).Get<SecuritySettings>() ?? new SecuritySettings();
+{
+    // Persisted security.json (written by PUT /api/config/security) overrides the
+    // Enabled/AllowOrigin appsettings values; credentials are never persisted to disk.
+    var securityPersistedPath = System.IO.Path.Combine(
+        System.IO.Path.Combine(builder.Environment.ContentRootPath,
+            (builder.Configuration.GetSection(GeneralSettings.SectionName).Get<GeneralSettings>() ?? new GeneralSettings()).DataFolder),
+        "security.json");
+    if (System.IO.File.Exists(securityPersistedPath))
+    {
+        var persisted = new PivotController.Core.Persistence.AtomicJsonStore(
+            Microsoft.Extensions.Logging.LoggerFactory.Create(b => { }).CreateLogger<PivotController.Core.Persistence.AtomicJsonStore>())
+            .Load<SecuritySettings>(securityPersistedPath, new SecuritySettings());
+        if (persisted.Authorization != null)
+        {
+            securitySettings.Authorization.Enabled = persisted.Authorization.Enabled;
+        }
+        if (persisted.CORS != null && !string.IsNullOrWhiteSpace(persisted.CORS.AllowOrigin))
+        {
+            securitySettings.CORS.AllowOrigin = persisted.CORS.AllowOrigin;
+        }
+        Console.WriteLine($"Security: security.json found at {securityPersistedPath}; Enabled/AllowOrigin override appsettings.json 'Security'.");
+    }
+}
+// Flexmonster UG rule (spec §5.2): when basic authorization is enabled, Allow origin
+// must be specified with proper origin URLs — never "*" and never empty. Fail fast.
 var securityValidation = securitySettings.Validate();
-if (securityValidation.Count > 0 && securitySettings.IsAuthEnabled)
+if (securityValidation.Count > 0 && securitySettings.Authorization.Enabled)
 {
     Console.Error.WriteLine("Invalid Security settings: " + string.Join("; ", securityValidation));
+    Console.Error.WriteLine("Fix Security settings (appsettings.json Security:* or {DataFolder}/security.json) and restart.");
     Environment.Exit(1);
-}
-else if (securityValidation.Count > 0)
-{
-    Console.Error.WriteLine("Invalid Security settings (ignored while Authorization disabled): " + string.Join("; ", securityValidation));
 }
 builder.Services.AddSingleton(securitySettings);
 builder.Services.AddSingleton<SecuritySettingsService>();
