@@ -115,7 +115,7 @@ namespace PivotController.Configuration.Controllers
             var dbProvider = (DatabaseDataProvider)_providerFactory.Create(ToDataSourceType(dbType));
             try
             {
-                return await ExecuteTestAsync(dbProvider, dbType, request.ConnectionStringName, request.Query).ConfigureAwait(false);
+                return await ExecuteTestAsync(dbProvider, dbType, request.ConnectionStringName, request.ConnectionString, request.Query).ConfigureAwait(false);
             }
             catch (DatabaseProviderUnavailableException ex)
             {
@@ -136,14 +136,14 @@ namespace PivotController.Configuration.Controllers
                 return UnprocessableEntity(new { success = false, error = $"Index '{index}' is not a database index." });
             }
             var dbProvider = (DatabaseDataProvider)_providerFactory.Create(definition.SourceType);
-            return await ExecuteTestAsync(dbProvider, dbType, definition.ConnectionStringName, definition.Query).ConfigureAwait(false);
+            return await ExecuteTestAsync(dbProvider, dbType, definition.ConnectionStringName, definition.ConnectionString, definition.Query).ConfigureAwait(false);
         }
 
-        private async Task<ActionResult> ExecuteTestAsync(DatabaseDataProvider dbProvider, DatabaseType dbType, string? connectionStringName, string? query)
+        private async Task<ActionResult> ExecuteTestAsync(DatabaseDataProvider dbProvider, DatabaseType dbType, string? connectionStringName, string? inlineConnectionString, string? query)
         {
             try
             {
-                var (success, error, latencyMs, columns) = await dbProvider.TestConnectionAsync(dbType, connectionStringName, query, HttpContext.RequestAborted).ConfigureAwait(false);
+                var (success, error, latencyMs, columns) = await dbProvider.TestConnectionAsync(dbType, connectionStringName, query, HttpContext.RequestAborted, inlineConnectionString).ConfigureAwait(false);
                 if (!success)
                 {
                     return StatusCode(StatusCodes.Status502BadGateway, new { success = false, error });

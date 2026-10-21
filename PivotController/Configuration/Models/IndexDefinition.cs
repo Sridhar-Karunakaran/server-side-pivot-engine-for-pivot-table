@@ -17,6 +17,8 @@ namespace PivotController.Configuration.Models
         /// <summary>Enum: Comma (,), Dot (.) or Space ( ). Raw symbols also accepted in JSON.</summary>
         public CsvThousandsSeparator CsvThousandsSeparator { get; set; } = CsvThousandsSeparator.Comma;
         public DatabaseType? DatabaseType { get; set; }
+        /// <summary>Inline connection string (Flexmonster-style). Takes precedence over ConnectionStringName when set.</summary>
+        public string? ConnectionString { get; set; }
         public string? ConnectionStringName { get; set; }
         public string? Query { get; set; }
         public bool AutoReload { get; set; } = false;
@@ -59,9 +61,9 @@ namespace PivotController.Configuration.Models
                 {
                     errors.Add("DatabaseType is required for database indexes");
                 }
-                if (string.IsNullOrWhiteSpace(ConnectionStringName))
+                if (string.IsNullOrWhiteSpace(ConnectionStringName) && string.IsNullOrWhiteSpace(ConnectionString))
                 {
-                    errors.Add("ConnectionStringName is required for database indexes");
+                    errors.Add("ConnectionStringName or ConnectionString is required for database indexes");
                 }
                 if (string.IsNullOrWhiteSpace(Query))
                 {

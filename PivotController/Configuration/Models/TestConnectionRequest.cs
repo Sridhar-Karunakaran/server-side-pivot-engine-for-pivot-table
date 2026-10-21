@@ -12,6 +12,9 @@ namespace PivotController.Configuration.Models
         [JsonPropertyName("connectionStringName")]
         public string? ConnectionStringName { get; set; }
 
+        [JsonPropertyName("connectionString")]
+        public string? ConnectionString { get; set; }
+
         [JsonPropertyName("query")]
         public string? Query { get; set; }
     }

@@ -48,7 +48,7 @@ namespace PivotController.Data.Providers
             ValidateQuery(definition.Query);
 
             var provider = _providerFactory.Create(dbType);
-            var connectionString = ResolveConnectionString(definition.ConnectionStringName);
+            var connectionString = ResolveConnectionString(definition.ConnectionStringName, definition.ConnectionString);
 
             await using var connection = provider.CreateConnection(connectionString);
             if (connection == null) throw new InvalidOperationException("Provider returned no connection.");
@@ -109,11 +109,20 @@ namespace PivotController.Data.Providers
             return row;
         }
 
-        public string ResolveConnectionString(string? connectionStringName)
+        /// <summary>
+        /// Resolves the connection string: inline ConnectionString on the index takes precedence
+        /// (Flexmonster-style, spec §3.x.2), falling back to ConnectionStringName from the
+        /// ConnectionStrings section. Values are never logged or echoed in errors.
+        /// </summary>
+        public string ResolveConnectionString(string? connectionStringName, string? inlineConnectionString = null)
         {
+            if (!string.IsNullOrWhiteSpace(inlineConnectionString))
+            {
+                return inlineConnectionString;
+            }
             if (string.IsNullOrWhiteSpace(connectionStringName))
             {
-                throw new InvalidOperationException("ConnectionStringName is required for database indexes.");
+                throw new InvalidOperationException("ConnectionString or ConnectionStringName is required for database indexes.");
             }
             var value = _configuration.GetConnectionString(connectionStringName);
             if (string.IsNullOrWhiteSpace(value))
@@ -155,13 +164,14 @@ namespace PivotController.Data.Providers
 
         /// <summary>Open connection + read the first row only; never loads or persists data (spec §3.x.5).</summary>
         public async Task<(bool Success, string? Error, long LatencyMs, List<string> Columns)> TestConnectionAsync(
-            DatabaseType databaseType, string? connectionStringName, string? query, CancellationToken ct)
+            DatabaseType databaseType, string? connectionStringName, string? query, CancellationToken ct,
+            string? inlineConnectionString = null)
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 var provider = _providerFactory.Create(databaseType);
-                var connectionString = ResolveConnectionString(connectionStringName);
+                var connectionString = ResolveConnectionString(connectionStringName, inlineConnectionString);
                 var validated = (query ?? "SELECT 1").Trim();
                 ValidateQuery(validated);
 

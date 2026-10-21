@@ -429,9 +429,10 @@ public class PostgresqlQueryProvider : IDatabaseQueryProvider
 If a requested provider's NuGet package is not present, `Create(DatabaseType)` returns
 501 "provider not available" — never a crash (verified requirement 4.1 of tasks.md).
 
-**Connection String Resolution:** by name from `ConnectionStrings:{ConnectionStringName}` in
-appsettings/user-secrets (per PostgreSQL UG: `Host`, `Port`, `Database`, `Username`, `Password`).
-Raw connection strings are never stored in index definitions nor logged.
+**Connection String Resolution (per user direction 2026-10):** inline `ConnectionString` on the
+index definition takes precedence; `ConnectionStringName` from `ConnectionStrings` in
+appsettings/user-secrets (PostgreSQL UG: `Host`, `Port`, `Database`, `Username`, `Password`) is the
+fallback. At least one is required. Connection string values are never logged.
 
 **Query Rules:** single read-only SELECT only; no `;` multi-statements; DML/DDL keywords
 rejected (422). No write-backs — server-side pivot (filter/sort/aggregate/report) is read-only

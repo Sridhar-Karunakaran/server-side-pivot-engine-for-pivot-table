@@ -793,15 +793,16 @@ public class DatabaseQuerySettings
 ### 3.x.0 Index Configuration Format for Database Indexes (appsettings.json)
 
 Database indexes are declared alongside CSV/JSON indexes in the existing
-`DataServer:Indexes` array (spec §0.2 bootstrap format). The connection string is referenced
-**by name** from the standard `ConnectionStrings` section — raw connection strings are never
-stored inside index definitions.
+`DataServer:Indexes` array (spec §0.2 bootstrap format). The connection string may be
+specified **directly within the index definition** (`ConnectionString`, Flexmonster-style)
+or **by name** via the standard `ConnectionStrings` section (`ConnectionStringName`).
+
+**Resolution precedence (spec §3.x.2):** `ConnectionString` (inline) takes precedence when set;
+`ConnectionStringName` is the fallback. At least one is required (validation error otherwise).
+Connection string values are never logged or echoed in error messages.
 
 ```json
 {
-  "ConnectionStrings": {
-    "PivotPostgreSql": "Host=localhost;Port=5432;Database=salesdb;Username=postgres;Password=password"
-  },
   "DataServer": {
     "Indexes": [
       {
@@ -809,7 +810,7 @@ stored inside index definitions.
         "Name": "PostgreSQL salesdata",
         "SourceType": "PostgreSQL",
         "DatabaseType": "PostgreSQL",
-        "ConnectionStringName": "PivotPostgreSql",
+        "ConnectionString": "Host=localhost;Port=5432;Database=salesdb;Username=postgres;Password=password",
         "Query": "SELECT * FROM salesdata ORDER BY orderid",
         "AutoReload": true,
         "ReloadIntervalMinutes": 20,
@@ -820,12 +821,16 @@ stored inside index definitions.
 }
 ```
 
+(`ConnectionStringName: "PivotPostgreSql"` + top-level `"ConnectionStrings": { ... }` remains
+supported as the alternative for deployments that keep credentials in user-secrets /
+environment variables instead of the index definition.)
+
 Property mapping vs. the Flexmonster-style block:
 
 | Flexmonster-style | This Data Server | Notes |
 |---|---|---|
 | `DatabaseType: "postgresql"` | `DatabaseType: "PostgreSQL"` + `SourceType: "PostgreSQL"` | enum-typed; value-insensitive JSON |
-| `ConnectionString` (inline) | `ConnectionStringName` (reference) | credential never stored in indexes.json / logs; user-secrets & env-var overrides supported |
+| `ConnectionString` (inline) | `ConnectionString` (inline, precedence) or `ConnectionStringName` (reference) | inline supported per user direction (2026-10); by-name keeps credentials out of indexes.json and enables user-secrets/env overrides |
 | `Indexes.DB.Query` | `Query` | single read-only SELECT |
 | `Indexes.DB.Status: "enabled"` | `Enabled: true` | bool |
 | `Indexes.DB.RefreshTime` (minutes; 0 = no refresh) | `AutoReload` + `ReloadIntervalMinutes` | 0 / AutoReload=false = no auto-refresh; positive N = reload every N minutes from server start; manual reload always available via `POST /api/indexes/{index}/reload` |
@@ -882,18 +887,40 @@ missing package — the server never crashes because a provider package is absen
 - Then: Returns 501 `{ error: "Oracle provider requires package 'Oracle.ManagedDataAccess.Core'..." }`
 - And: Server keeps running; other indexes unaffected
 
-### 3.x.2 Connection String Resolution (Configured, Never Inlined)
+### 3.x.2 Connection String Resolution (Inline First, Then By Name)
 
-**SHALL** resolve connection strings by name from the `ConnectionStrings` section of
-`appsettings.json` (following the Syncfusion PostgreSQL UG pattern). Index definitions store a
-`ConnectionStringName` reference — **never** a raw connection string — keeping credentials out of
-`indexes.json` and enabling user-secrets/environment-variable overrides in deployment.
+**SHALL** resolve connection strings in this precedence (per user direction, 2026-10):
+1. `ConnectionString` — specified directly within the index definition (Flexmonster-style, inline)
+2. `ConnectionStringName` — by name from the `ConnectionStrings` section of `appsettings.json`
+   (Syncfusion PostgreSQL UG pattern; keeps credentials out of `indexes.json` and enables
+   user-secrets/environment-variable overrides in deployment)
+
+At least one of the two is required (validation error otherwise). Connection string values are
+never logged or echoed in error messages, whichever form is used.
 
 **Scenario 3.x.2.1: Named Connection String Resolves**
 - Given: Index with `connectionStringName: "PivotPostgreSql"`
 - And: appsettings contains `"ConnectionStrings": { "PivotPostgreSql": "Host=localhost;Port=5432;Database=salesdb;Username=postgres;Password=pass" }`
 - When: Index loaded
 - Then: Connection opened with that string; `SELECT * FROM salesdata` executes against `salesdb`
+
+**Scenario 3.x.2.1a: Inline Connection String (VERIFIED live, 2026-10)**
+- Given: Index with `connectionString: "Host=localhost;Port=5433;Database=salesdb;Username=postgres;Password=postgres"`
+  and NO `connectionStringName`
+- When: Server boots (bootstrap) or the index is created via the API
+- Then: Connection opened with the inline string; query executes; rows loaded
+  (verified: 8 rows loaded from `salesdb.salesdata` at bootstrap and via POST /api/indexes 201)
+
+**Scenario 3.x.2.1b: Inline Takes Precedence Over Named**
+- Given: Index with both `connectionString` and `connectionStringName` set
+- When: Index loaded
+- Then: The inline `ConnectionString` is used; the named entry is ignored
+
+**Scenario 3.x.2.2: Unknown Connection String Name**
+- Given: Index with `connectionStringName: "DoesNotExist"` and no inline `connectionString`
+- When: Index created or loaded
+- Then: Validation error (422 on create; `Failed` status + `LastError` on load); connection strings
+  are never logged or echoed in error messages
 
 **Scenario 3.x.2.2: Unknown Connection String Name**
 - Given: Index with `connectionStringName: "DoesNotExist"`
