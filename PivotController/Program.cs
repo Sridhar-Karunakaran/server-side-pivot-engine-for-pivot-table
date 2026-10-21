@@ -3,6 +3,7 @@ using PivotController.Configuration.Services;
 using PivotController.Core.Persistence;
 using PivotController.Data.Providers;
 using PivotController.Indexing;
+using PivotController.Reports.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 var CustomOrigins = "_customOrigins";
@@ -158,6 +159,41 @@ builder.Services.AddCors(options =>
 // CacheSizeLimit == 0 disables response caching (handled in IndexManager).
 builder.Services.AddMemoryCache();
 
+// Report Sharing settings (Step 6, spec §6): appsettings.json "ReportSharingOptions",
+// persisted overrides in {DataFolder}/reportsharing.json (written by PUT /api/config/reportsharing).
+// Expiration cleanup runs regardless of AutoDeletingEnabled; AutoDeletingEnabled only governs
+// MaxSizeOfFolder quota eviction (spec §6.4/§6.6).
+var reportSharingSettings = builder.Configuration.GetSection(ReportSharingSettings.SectionName).Get<ReportSharingSettings>() ?? new ReportSharingSettings();
+var reportSharingGeneral = builder.Configuration.GetSection(GeneralSettings.SectionName).Get<GeneralSettings>() ?? new GeneralSettings();
+var reportSharingDataFolder = System.IO.Path.Combine(builder.Environment.ContentRootPath, reportSharingGeneral.DataFolder);
+var reportSharingPersistedPath = System.IO.Path.Combine(reportSharingDataFolder, ReportSharingService.FileName);
+if (System.IO.File.Exists(reportSharingPersistedPath))
+{
+    var reportSharingStore = new AtomicJsonStore(Microsoft.Extensions.Logging.LoggerFactory.Create(b => { }).CreateLogger<AtomicJsonStore>());
+    var reportSharingPersisted = reportSharingStore.Load<ReportSharingSettings>(reportSharingPersistedPath, new ReportSharingSettings());
+    // Precedence (spec §6.8, same model as Steps 2-5): non-null persisted fields override appsettings.
+    reportSharingSettings.EndpointEnabled = reportSharingPersisted.EndpointEnabled;
+    if (!string.IsNullOrWhiteSpace(reportSharingPersisted.PathToFolder)) reportSharingSettings.PathToFolder = reportSharingPersisted.PathToFolder;
+    reportSharingSettings.ReportExpirationTime = reportSharingPersisted.ReportExpirationTime;
+    reportSharingSettings.MaxSizeOfFolder = reportSharingPersisted.MaxSizeOfFolder;
+    reportSharingSettings.AutoDeletingEnabled = reportSharingPersisted.AutoDeletingEnabled;
+    Console.WriteLine($"ReportSharing: reportsharing.json found at {reportSharingPersistedPath}; its values override appsettings.json 'ReportSharingOptions'. Delete the file to configure via appsettings.json only.");
+}
+// Fail fast on invalid values (negative quota/expiration, traversal path — spec §6.8).
+if (reportSharingSettings.ReportExpirationTime < 0 || reportSharingSettings.MaxSizeOfFolder < 0)
+{
+    Console.Error.WriteLine("Invalid ReportSharingOptions: ReportExpirationTime and MaxSizeOfFolder must be >= 0.");
+    Environment.Exit(1);
+}
+if (reportSharingSettings.PathToFolder != null && reportSharingSettings.PathToFolder.Contains(".."))
+{
+    Console.Error.WriteLine("Invalid ReportSharingOptions: PathToFolder path traversal (..) not allowed.");
+    Environment.Exit(1);
+}
+builder.Services.AddSingleton(reportSharingSettings);
+builder.Services.AddSingleton<ReportSharingService>();
+builder.Services.AddHostedService<ReportSweepWorker>();
+
 // Kestrel listener (spec §1.2 port binding, spec §4 HTTPS). General:Port takes precedence
 // over the `urls` key; only an explicit ASPNETCORE_URLS environment variable overrides it.
 if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
@@ -223,6 +259,9 @@ app.Services.GetRequiredService<DataStorageSettingsService>().LoadPersisted();
 // Load persisted Security settings (security.json: authorization.enabled, cors.allowOrigin)
 // so runtime changes made via PUT /api/config/security survive restarts (spec §5.4).
 app.Services.GetRequiredService<SecuritySettingsService>().LoadPersisted(generalService.DataFolderPath);
+// Load persisted Report Sharing settings (reportsharing.json) — persisted values already
+// merged pre-Build above for startup binding; refresh in-place via the service for parity.
+app.Services.GetRequiredService<ReportSharingService>().LoadPersisted();
 
 // Bootstrap: register indexes from appsettings.json and DataServer/indexes.json, preload enabled ones.
 var indexManager = app.Services.GetRequiredService<IIndexManager>();

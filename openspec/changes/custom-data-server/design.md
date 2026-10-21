@@ -439,15 +439,28 @@ ExecuteReaderAsync(ct)
 
 ### 10. Report Sharing Architecture
 
+**Configuration (appsettings.json `ReportSharingOptions`, persisted to `{DataFolder}/reportsharing.json`):**
+```
+{ "EndpointEnabled": false, "PathToFolder": "DataServer/reports",
+  "ReportExpirationTime": 0, "MaxSizeOfFolder": 0, "AutoDeletingEnabled": false }
+```
+- Relative `PathToFolder` resolves against `{DataFolder}`; path traversal → 422 / startup fail-fast.
+- Payloads are opaque JSON blobs (validity-checked only, no Pivot Report structure validation).
+- POST always creates a new GUID — no overwrite.
+
 **Storage Layout:**
 ```
-DataServer/reports/
-├── {reportId}.json           # report payload
-├── {reportId}.meta.json      # { reportId, name, owner, createdAt, expiresAt, sizeBytes }
-└── .quota                    # { currentBytes }
+{DataFolder}/{PathToFolder}/
+├── {reportId}.json           # report payload (opaque)
+└── {reportId}.meta.json      # { reportId, name, owner, createdAt, expiresAt, sizeBytes }
 ```
 
-**Expiry & Quota Sweep (BackgroundService):**
+**Expiry & Quota Sweep (BackgroundService — every 5 minutes):**
+1. **Expiration cleanup (ALWAYS, independent of AutoDeletingEnabled):** delete every report
+   whose `ExpiresAt < UtcNow` (`ExpiresAt == null` → permanent, never deleted).
+2. **Quota eviction (only when `MaxSizeOfFolder > 0 && AutoDeletingEnabled`):** if total folder
+   size exceeds the quota, delete oldest (`CreatedAt`-first) reports until under the limit.
+
 ```csharp
 public class ReportSweepWorker : BackgroundService
 {
@@ -455,39 +468,42 @@ public class ReportSweepWorker : BackgroundService
     {
         while (!ct.IsCancellationRequested)
         {
-            if (_config.ReportSharing.AutoDelete)
+            // 1. Expiration cleanup — runs regardless of AutoDeletingEnabled
+            var expired = LoadReportMetadata().Where(m => m.ExpiresAt < DateTime.UtcNow).ToList();
+            foreach (var report in expired)
+                DeleteReport(report.ReportId);
+
+            // 2. Quota eviction — only when AutoDeletingEnabled manages the storage limit
+            if (_settings.AutoDeletingEnabled && _settings.MaxSizeOfFolder > 0)
             {
-                // Every 5 minutes
-                var expired = LoadReportMetadata().Where(m => m.ExpiresAt < DateTime.UtcNow);
-                foreach (var report in expired)
-                    DeleteReport(report.ReportId);
-                
-                // Enforce quota: evict oldest first
-                if (_config.ReportSharing.MaxFolderSizeMB > 0)
+                var maxBytes = _settings.MaxSizeOfFolder * 1024L * 1024L;
+                var reports = LoadReportMetadata().OrderBy(m => m.CreatedAt).ToList();
+                while (CalculateFolderSize() > maxBytes && reports.Count > 0)
                 {
-                    var currentBytes = CalculateFolderSize();
-                    var maxBytes = _config.ReportSharing.MaxFolderSizeMB * 1024 * 1024;
-                    
-                    if (currentBytes > maxBytes)
-                    {
-                        var toDelete = SortByCreatedAt().Take(/* count to free space */);
-                        foreach (var report in toDelete)
-                            DeleteReport(report.ReportId);
-                    }
+                    DeleteReport(reports[0].ReportId);
+                    reports.RemoveAt(0);
                 }
             }
-            
             await Task.Delay(TimeSpan.FromMinutes(5), ct);
         }
     }
 }
 ```
 
+**Save-time quota enforcement (synchronous, in ReportSharingService):**
+```
+POST /api/reportsharing/reports
+  ├─ EndpointEnabled=false? → 404 "Report sharing disabled"
+  ├─ MaxSizeOfFolder == 0 → save (unlimited)
+  ├─ AutoDeletingEnabled=true → evict oldest until the new report fits; still not → 507
+  └─ AutoDeletingEnabled=false → new report would exceed quota? → 507 Insufficient Storage
+```
+
 **Read Semantics:**
 ```
 GET /api/reportsharing/reports/{reportId}
   ├─ Load metadata
-  ├─ ExpiresAt < now? → 410 Gone (file left if AutoDelete=false)
+  ├─ ExpiresAt < now? → 410 Gone
   ├─ Load payload
   └─ Return 200
 ```
