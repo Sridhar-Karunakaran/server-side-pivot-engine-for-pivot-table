@@ -17,15 +17,20 @@ namespace PivotController.Controllers
 
         private readonly IMemoryCache _cache;
         private readonly Indexing.IIndexManager _indexManager;
+        // Report Sharing (Step 6): when EndpointEnabled, every client pivot request's
+        // report configuration is stored automatically server-side (spec §6.3.1 note).
+        private readonly Reports.Services.ReportSharingService _reportSharing;
         private bool isRendered;
         private PivotEngine<ExpandoObject> PivotEngine = new PivotEngine<ExpandoObject>();
         private ExcelExport excelExport = new ExcelExport();
         private PivotExportEngine<ExpandoObject> pivotExport = new PivotExportEngine<ExpandoObject>();
 
-        public PivotController(IMemoryCache cache, Indexing.IIndexManager indexManager)
+        public PivotController(IMemoryCache cache, Indexing.IIndexManager indexManager,
+            Reports.Services.ReportSharingService reportSharing)
         {
             _cache = cache;
             _indexManager = indexManager;
+            _reportSharing = reportSharing;
         }
 
         [Route("/api/pivot/post")]
@@ -53,6 +58,36 @@ namespace PivotController.Controllers
             string indexName = raw["index"]?.ToString() ?? raw["Index"]?.ToString()
                 ?? HttpContext.Request.Query["index"].FirstOrDefault()
                 ?? ServerIndexName;
+            // Report Sharing (Step 6): auto-store the client's report configuration on
+            // every pivot request when the endpoint is enabled. Never blocks the pivot
+            // response — auto-save failures are logged, not returned to the client.
+            if (_reportSharing.EndpointEnabled)
+            {
+                try
+                {
+                    var (saveResult, _) = _reportSharing.Save(
+                        name: $"pivot-{indexName}",
+                        owner: HttpContext.Connection.RemoteIpAddress?.ToString() ?? "client",
+                        payloadJson: JsonConvert.SerializeObject(new
+                        {
+                            index = indexName,
+                            dataSourceSettings = param.DataSourceSettings,
+                            internalProperties = new
+                            {
+                                param.InternalProperties?.EnableVirtualization,
+                                param.InternalProperties?.Locale
+                            }
+                        }));
+                    if (saveResult == Reports.Services.ReportSharingService.SaveResult.Saved)
+                    {
+                        // Nothing to surface — auto-save is server-side bookkeeping.
+                    }
+                }
+                catch (Exception ex)
+                {
+                    System.Console.WriteLine($"ReportSharing auto-save failed for index '{indexName}': {ex.Message}");
+                }
+            }
             ApplyIndexFieldMapping(param, indexName);
             if (!_indexManager.TryGetDefinition(indexName, out _))
             {
