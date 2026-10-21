@@ -2,7 +2,7 @@
 
 **Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** In Progress — Phases 1–3 (Steps 1–3) implemented and verified. **Order revised (2026-10): HTTPS Settings = Step 4 (next); Database Query Settings deferred to Step 8 (final) because it requires DB provider support on the machine.** Phases 4+ pending.
+**Status:** Steps 1–4 implemented & verified (Index, General, Data Storage, **HTTPS COMPLETE**). **Order revised (2026-10): Database Query Settings deferred to Step 8 (final) because it requires DB provider support on the machine.** Next: Step 5 Security Settings.
 
 ---
 
@@ -562,7 +562,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 
 ---
 
-## Phase 4: HTTPS Settings
+## Phase 4: HTTPS Settings (REORDERED — Step 4; COMPLETE & VERIFIED)
 
 *Estimated: 1 day*
 
@@ -613,6 +613,30 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 - [x] TLS 1.2+ enforced (TLS 1.1 handshake refused, TLS 1.2 OK — verified with curl)
 
 **Specification Mapping:** 15.1, 6.4
+
+---
+
+### 4.3 Final HTTPS Hardening (added during verification — COMPLETE)
+
+**Objective:** All user-reported defects resolved; Step 4 signed off
+
+**Subtasks:**
+- [x] `SubjectName` store-lookup option (XOR with thumbprint; 422 when both)
+- [x] Store lookup cross-platform + `CurrentUser`↔`LocalMachine` location fallback; key-less entries skipped; detailed miss errors
+- [x] PEM: fullchain support; Windows ephemeral-key normalization via in-memory PFX (default flags, safe fallback)
+- [x] `AllowInvalidCertificates` REMOVED (browsers enforce trust; server checks loadability only) — purged from code, appsettings, and specs
+- [x] `AllowHttpTunnelPort` REMOVED (with its companion listener + redirect skip)
+- [x] https.json precedence hardened: nulls never wipe appsettings; stored `enabled:false` cannot disable; loud override log
+- [x] Test PKI: `Cert/PEM-Cert/` (CA `CA:TRUE` + CA-signed SAN leaf + fullchain); referenced by appsettings.json
+- [x] `verify-https.sh` end-to-end suite (33 checks) + tunnel samples (`tunnel-completed.html` with Sector/ProCost axes, `https-tunnel-simple.html`)
+
+**Verification:**
+- [x] Store source verified LIVE end-to-end (cert imported into machine store; served cert fingerprint matches the stored cert; location fallback exercised)
+- [x] PEM + PFX regression green after every change (HTTPS 200 HTTP/2, pivot POST 200)
+- [x] Browser-trust simulation: `curl --cacert test-ca.pem` (no `-k`) → 200
+- [x] Suite 33/33; build 0 errors
+
+**Specification Mapping:** 4.1–4.5
 
 ---
 
