@@ -400,7 +400,7 @@ POST /api/indexes/{index}/enable
   └─ Return 200 { status: Ready/Failed, rowCount }
 ```
 
-### 9. Database Query Processing (REVISED 2026-10 — PostgreSQL validation pass, pre-Step 7)
+### 9. Database Data Source Integration (REVISED 2026-10 — fetching/indexing layer, verified live; independent of the Command timeout / Command time limit step)
 
 **Provider Abstraction (provider-agnostic registry keyed by `DatabaseType`):**
 ```csharp

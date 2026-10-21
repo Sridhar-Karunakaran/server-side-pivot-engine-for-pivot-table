@@ -4,7 +4,7 @@
 
 **Version:** 2.2
 
-**Implementation Order (reordered 2026-10):** Index Configuration (Step 1) → General Settings → Data Storage Settings → **HTTPS Settings (Step 4)** → Security Settings (Step 5) → Report Sharing Settings (Step 6) → Client-Side Integration (Step 7) → **Database Query Settings (Step 8 - FINAL)** — deferred to last because it requires DB provider support installed on the machine; no other step depends on it.
+**Implementation Order (reordered 2026-10):** Index Configuration (Step 1) → General Settings → Data Storage Settings → **HTTPS Settings (Step 4)** → Security Settings (Step 5) → Report Sharing Settings (Step 6) → Client-Side Integration (Step 7) → **Database Query Settings (Step 8 - FINAL)** — deferred to last because it requires DB provider support installed on the machine; no other step depends on it. **Scope note:** the Database Query Settings step configures only `Command timeout` / `Command time limit` (§3.1–§3.3); DB data fetching and indexing is §3.x (implemented & verified) and works independently of that step.
 
 ---
 
@@ -18,7 +18,8 @@
 | 4 | §4 HTTPS Settings | ✅ Implemented & verified (COMPLETE) | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; HTTP/1 & HTTP/2 negotiation; merge-patch API; https.json precedence hardened; test PKI shipped (Cert/PEM-Cert/); verify-https.sh 33 checks; see deltas below |
 | 5 | §5 Security Settings | ✅ Implemented & verified (COMPLETE) | Basic Auth (Authorization.Enabled + Data Server credentials) + CORS (AllowOrigin; specific origins required when auth enabled, never '*', fail-fast at startup, 422 via API); see deltas below |
 | 6 | §6 Report Sharing | ✅ Implemented & verified (COMPLETE) | Report storage/expiration/quota/auto-delete; `ReportSharingOptions` appsettings + `reportsharing.json` persistence; auto-store on client pivot requests; see deltas below |
-| 7 | §3 Database Query | ⬜ Not started | Provider-agnostic DB integration (§3.x added): SQLite + PostgreSQL verified feasible (live Npgsql PoC vs PostgreSQL 17); MySQL/MariaDB/MSSQL/Oracle as optional registered providers |
+| 7 | §3 Database Query Settings | ⬜ Not started (Step 7 = Command timeout / Command time limit ONLY; DB fetching/indexing is §3.x, already verified) | DB data can be indexed before Step 7; Step 7 tunes query timeouts only |
+| — | §3.x Database Data Source Integration | ✅ Implemented & verified live | PostgreSQL 17 via Npgsql + SQLite; connection-string-by-name, single-SELECT rule, ExpandoObject mapping into shared pipeline; MySQL/MariaDB/MSSQL/Oracle optional (501 until packages added) |
 | 8 | §7 Client-Side Integration | ⬜ Not started | Sample sends index via `?index=` query |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
@@ -719,11 +720,19 @@ public class DataStorageSettings
 
 ### 3.1 Configuration Model
 
+> **Step 7 scope (per user direction, 2026-10):** This section configures ONLY the two
+> database-query timeout options below. It is NOT about fetching/indexing DB data (see §3.x,
+> which is implemented and verified independently).
+
 ```csharp
 public class DatabaseQuerySettings
 {
+    /// <summary>Command timeout: enables the Command time limit. When disabled, the Data Server
+    /// defers to the SQL driver's own timeout. Database data source type only. Default: false.</summary>
     public bool CommandTimeoutEnabled { get; set; } = false;
-    public int CommandTimeLimit { get; set; } = 150;  // seconds
+    /// <summary>Command time limit: wait time in seconds before canceling the query attempt and
+    /// generating an error. 0 = unlimited. Database data source type only. Default: 150.</summary>
+    public int CommandTimeLimit { get; set; } = 150;
 }
 ```
 
@@ -762,17 +771,81 @@ public class DatabaseQuerySettings
 
 ---
 
-## 3.x Database Data Source Integration (STEP 7 — Database Query Integration; REVISED 2026-10)
+## 3.x Database Data Source Integration (DATA FETCHING/INDEXING — NOT Step 7; REVISED 2026-10)
 
-> **Provenance note (2026-10, PostgreSQL validation pass):** This section was expanded before Step 7
-> implementation. The original §3 covered only the `DatabaseQuerySettings` timeout configuration and
-> listed database providers as "optional stubs" with no connectivity, query execution, retrieval, or
-> indexing detail. A live feasibility check was performed against PostgreSQL 17 using the Npgsql
-> provider (the .NET data provider mandated by the Syncfusion PostgreSQL UG documentation) and the
-> sample `salesdb.salesdata` dataset from that UG; connection via connection string, parameterized
-> SELECT execution, ExpandoObject row mapping, and `CommandTimeout` enforcement were all verified
-> end-to-end before this spec revision. The architecture below is deliberately provider-agnostic so
-> that PostgreSQL, MySQL, MariaDB, Microsoft SQL Server, and Oracle share one implementation path.
+> **Scope clarification (2026-10, per user direction):** This section covers DB data fetching and
+> indexing (connection, query execution, retrieval, indexing pipeline) and is **independent of
+> Step 7 "Database Query Settings"**. Step 7 (§3.1–§3.3) configures ONLY two options:
+> `Command timeout` (enables the Command time limit; when disabled the Data Server defers to the
+> SQL driver's own timeout; DB data source type only; default: disabled) and `Command time limit`
+> (wait time in seconds before canceling a query attempt and generating an error; 0 = unlimited;
+> DB data source type only; default: 150). DB data can be indexed BEFORE Step 7 is implemented —
+> Step 7 only tunes query timeouts for those indexes.
+>
+> **Provenance note (2026-10, PostgreSQL validation pass):** A live feasibility check was performed
+> against PostgreSQL 17 using the Npgsql provider (the .NET data provider mandated by the Syncfusion
+> PostgreSQL UG documentation) and the sample `salesdb.salesdata` dataset from that UG; connection
+> via connection string, SELECT execution, ExpandoObject row mapping, and `CommandTimeout`
+> enforcement were all verified end-to-end before this spec revision. The architecture below is
+> deliberately provider-agnostic so that PostgreSQL, MySQL, MariaDB, Microsoft SQL Server, and
+> Oracle share one implementation path.
+
+### 3.x.0 Index Configuration Format for Database Indexes (appsettings.json)
+
+Database indexes are declared alongside CSV/JSON indexes in the existing
+`DataServer:Indexes` array (spec §0.2 bootstrap format). The connection string is referenced
+**by name** from the standard `ConnectionStrings` section — raw connection strings are never
+stored inside index definitions.
+
+```json
+{
+  "ConnectionStrings": {
+    "PivotPostgreSql": "Host=localhost;Port=5432;Database=salesdb;Username=postgres;Password=password"
+  },
+  "DataServer": {
+    "Indexes": [
+      {
+        "Index": "DB",
+        "Name": "PostgreSQL salesdata",
+        "SourceType": "PostgreSQL",
+        "DatabaseType": "PostgreSQL",
+        "ConnectionStringName": "PivotPostgreSql",
+        "Query": "SELECT * FROM salesdata ORDER BY orderid",
+        "AutoReload": true,
+        "ReloadIntervalMinutes": 20,
+        "Enabled": true
+      }
+    ]
+  }
+}
+```
+
+Property mapping vs. the Flexmonster-style block:
+
+| Flexmonster-style | This Data Server | Notes |
+|---|---|---|
+| `DatabaseType: "postgresql"` | `DatabaseType: "PostgreSQL"` + `SourceType: "PostgreSQL"` | enum-typed; value-insensitive JSON |
+| `ConnectionString` (inline) | `ConnectionStringName` (reference) | credential never stored in indexes.json / logs; user-secrets & env-var overrides supported |
+| `Indexes.DB.Query` | `Query` | single read-only SELECT |
+| `Indexes.DB.Status: "enabled"` | `Enabled: true` | bool |
+| `Indexes.DB.RefreshTime` (minutes; 0 = no refresh) | `AutoReload` + `ReloadIntervalMinutes` | 0 / AutoReload=false = no auto-refresh; positive N = reload every N minutes from server start; manual reload always available via `POST /api/indexes/{index}/reload` |
+| `Type: "database"` | `SourceType: <DatabaseType enum>` | database source types route to DatabaseDataProvider |
+
+**Scenario 3.x.0.1: Database Index Bootstrap**
+- Given: appsettings.json declares a database index as above with a resolvable
+  `ConnectionStrings:PivotPostgreSql`
+- When: Server starts
+- Then: Index registered and loaded at bootstrap (or per `Enabled` semantics); status Ready with
+  rowCount equal to the query's row count; failure marks the index Failed with LastError and
+  applies the DataStorage retry/keep-data semantics (§2)
+
+**Scenario 3.x.0.2: Refresh Time = 0 (No Auto-Refresh)**
+- Given: Database index with `AutoReload: false` (or `ReloadIntervalMinutes: 0`)
+- When: Server runs
+- Then: No scheduled reloads; data refreshed only via `POST /api/indexes/{index}/reload` or edit
+
+> **Note:** `ORDER BY` in the query is honored (rows fetched in query order), though pivot output
+> ordering is driven by the engine's sort settings, not fetch order.
 
 ### 3.x.1 Supported Providers (Provider-Agnostic Registry)
 

@@ -2,7 +2,7 @@
 
 **Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** Steps 1–6 implemented & verified (Index, General, Data Storage, HTTPS, Security, **Report Sharing COMPLETE**). Next: Step 7 Client-Side Integration. PostgreSQL database retrieval feasibility for the subsequent Database Query step verified live (PostgreSQL 17 + Npgsql PoC per Syncfusion PostgreSQL UG); spec §3.x and design §9 updated — awaiting user approval before implementing database integration.
+**Status:** Steps 1–6 implemented & verified (Index, General, Data Storage, HTTPS, Security, **Report Sharing COMPLETE**). **§3.x Database Data Source Integration (DB fetching/indexing) implemented & verified live** (PostgreSQL 17 via Npgsql + SQLite; spec §3.x, design §9). Next: Step 7 Client-Side Integration; the Database Query Settings step (Command timeout / Command time limit ONLY — NOT data fetching) is last. Step 7 implementation is awaiting user approval.
 
 ---
 
@@ -509,17 +509,20 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 
 ---
 
-## Phase 4: Database Query Settings (DEFERRED — reordered to Step 8 / Final; requires DB support on the machine)
+## Phase 4: Database Query Settings (DEFERRED — reordered to last; Step 7 = Command timeout / Command time limit ONLY)
 
 *Estimated: 1-2 days*
 
-*Update 2026-10 (pre-Step 7 validation pass):* PostgreSQL feasibility verified live — PostgreSQL 17
-installed in sandbox, `salesdb.salesdata` sample data created per the Syncfusion PostgreSQL UG, and
-an Npgsql PoC confirmed connection-string login, parameterized SELECT execution, ExpandoObject
-mapping (same shape as CSV/JSON providers), and CommandTimeout enforcement. Spec §3.x (Database
-Data Source Integration) added to `specs/data-server-backend/spec.md`; design §9 revised with the
-provider registry and validated pipeline. PostgresqlQueryProvider is therefore **mandatory**
-alongside SQLite (both proven); the remaining providers remain optional stubs.
+> **Scope correction (2026-10, user direction):** This phase is **only** the `Command timeout` /
+> `Command time limit` options (§3.1–§3.3) applied while executing queries for database indexes.
+> It does NOT cover fetching/indexing DB data — that is §3.x (Database Data Source Integration),
+> which is already implemented and verified live. DB data can be indexed before this phase ships.
+
+*Update 2026-10 (§3.x validation pass):* PostgreSQL verified live — PostgreSQL 17 installed in
+sandbox, `salesdb.salesdata` sample data created per the Syncfusion PostgreSQL UG, and an Npgsql
+PoC confirmed connection-string login, parameterized SELECT execution, ExpandoObject mapping
+(same shape as CSV/JSON providers), and CommandTimeout enforcement. §3.x implemented: SQLite +
+PostgreSQL providers shipped; MySQL/MariaDB/MSSQL/Oracle return 501 until their packages are added.
 
 ### 4.1 Database Provider Abstraction
 
@@ -570,7 +573,7 @@ PostgreSQL, MySQL, MariaDB, MSSQL, Oracle, SQLite)
 
 ---
 
-### 3.2 Query Timeout Enforcement
+### 3.2 Query Timeout Enforcement (Step 7 core: Command timeout / Command time limit)
 
 **Objective:** Enforce CommandTimeLimit on queries
 
