@@ -2,7 +2,7 @@
 
 **Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** Steps 1–6 implemented & verified (Index, General, Data Storage, HTTPS, Security, **Report Sharing COMPLETE**). Next: Step 7 Client-Side Integration.
+**Status:** Steps 1–6 implemented & verified (Index, General, Data Storage, HTTPS, Security, **Report Sharing COMPLETE**). Next: Step 7 Client-Side Integration. PostgreSQL database retrieval feasibility for the subsequent Database Query step verified live (PostgreSQL 17 + Npgsql PoC per Syncfusion PostgreSQL UG); spec §3.x and design §9 updated — awaiting user approval before implementing database integration.
 
 ---
 
@@ -513,33 +513,60 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 
 *Estimated: 1-2 days*
 
+*Update 2026-10 (pre-Step 7 validation pass):* PostgreSQL feasibility verified live — PostgreSQL 17
+installed in sandbox, `salesdb.salesdata` sample data created per the Syncfusion PostgreSQL UG, and
+an Npgsql PoC confirmed connection-string login, parameterized SELECT execution, ExpandoObject
+mapping (same shape as CSV/JSON providers), and CommandTimeout enforcement. Spec §3.x (Database
+Data Source Integration) added to `specs/data-server-backend/spec.md`; design §9 revised with the
+provider registry and validated pipeline. PostgresqlQueryProvider is therefore **mandatory**
+alongside SQLite (both proven); the remaining providers remain optional stubs.
+
 ### 4.1 Database Provider Abstraction
 
-**Objective:** Implement pluggable database provider pattern
+**Objective:** Implement pluggable database provider pattern (provider-agnostic; one path for
+PostgreSQL, MySQL, MariaDB, MSSQL, Oracle, SQLite)
 
 **Subtasks:**
 - [ ] Create file: `PivotController/Data/Providers/IDatabaseQueryProvider.cs`
-  - Properties: SourceType
+  - Properties: DatabaseType (keyed by DatabaseType, not SourceType)
   - Methods: CreateConnection(connectionString)
 - [ ] Create file: `PivotController/Data/Providers/SqliteQueryProvider.cs` (mandatory)
-  - Implement for SQLite connections
-- [ ] Create stub files (optional, documented):
-  - `SqlServerQueryProvider.cs` (requires System.Data.SqlClient package)
-  - `PostgresqlQueryProvider.cs` (requires Npgsql package)
+  - Implement for SQLite connections (Microsoft.Data.Sqlite)
+- [ ] Create file: `PivotController/Data/Providers/PostgresqlQueryProvider.cs` (mandatory — verified feasible)
+  - Uses Npgsql (per Syncfusion PostgreSQL UG): `new NpgsqlConnection(connectionString)`
+- [ ] Create stub files (optional, feature-detected registration; 501 when package absent):
+  - `SqlServerQueryProvider.cs` (requires Microsoft.Data.SqlClient package)
   - `MySqlQueryProvider.cs` (requires MySqlConnector package)
-  - etc.
+  - `MariadbQueryProvider.cs` (requires MySqlConnector package)
+  - `OracleQueryProvider.cs` (requires Oracle.ManagedDataAccess.Core package)
+- [ ] Create file: `PivotController/Data/Providers/DatabaseQueryProviderRegistry.cs`
+  - Maps DatabaseType → provider; unavailable provider → clear 501 error naming the missing package
+- [ ] Implement connection string resolution by name (index.ConnectionStringName → config
+  `ConnectionStrings:{name}` / user-secrets; unknown name → 422/validation error; never log secrets)
+- [ ] Implement query validation: single read-only SELECT, no `;`, no DML/DDL keywords → 422
 - [ ] Create file: `PivotController/Data/Providers/DatabaseDataProvider.cs`
-  - Implement IDataSourceProvider
-  - Use IDatabaseQueryProvider factory to create connection
-  - Execute query with timeout
-  - Map results to ExpandoObject[]
+  - Implement IDataSourceProvider (same LoadAsync contract as CSV/JSON)
+  - Use IDatabaseQueryProvider registry to create connection
+  - Execute query with CommandTimeout per DatabaseQuerySettings
+  - Map results to List<ExpandoObject> (column names → properties; DBNull → null; mapping per
+    FieldMappings when enabled, else driver-reported types)
+- [ ] Modify `DataSourceProviderFactory` to route SqlServer/PostgreSQL/MySql/Oracle/MariaDb/Sqlite
+  SourceTypes to DatabaseDataProvider
+- [ ] IndexDefinition.Validate(): require DatabaseType + ConnectionStringName + Query for DB
+  source types; validate query safety rules
+- [ ] Implement `POST /api/indexes/test-connection` (+ per-index variant) per spec §3.x.5
 
 **Verification:**
 - [ ] SQLite provider works (mandatory)
-- [ ] Optional providers gracefully missing (reflection-registered only if package present)
-- [ ] Query execution returns data or timeout error
+- [ ] PostgreSQL provider works against live PostgreSQL with connection string from
+  appsettings `ConnectionStrings` and `SELECT * FROM salesdata` (UG flow)
+- [ ] DB rows produce identical pivot results to a CSV index holding the same data (same
+  engine pipeline: filter/sort/aggregate/report) — spec §3.x.4.1
+- [ ] Optional providers gracefully missing (501 naming missing package; server keeps running)
+- [ ] Query validation rejects multi-statement and DML queries (422)
+- [ ] Query execution returns data or timeout error (504 surface; CommandTimeout verified live)
 
-**Specification Mapping:** 5.1, 5.2, 5.3, 14.1
+**Specification Mapping:** 3.x.1–3.x.6, 0.8, 5.1, 5.2, 5.3, 14.1
 
 ---
 

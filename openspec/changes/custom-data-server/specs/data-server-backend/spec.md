@@ -18,7 +18,7 @@
 | 4 | §4 HTTPS Settings | ✅ Implemented & verified (COMPLETE) | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; HTTP/1 & HTTP/2 negotiation; merge-patch API; https.json precedence hardened; test PKI shipped (Cert/PEM-Cert/); verify-https.sh 33 checks; see deltas below |
 | 5 | §5 Security Settings | ✅ Implemented & verified (COMPLETE) | Basic Auth (Authorization.Enabled + Data Server credentials) + CORS (AllowOrigin; specific origins required when auth enabled, never '*', fail-fast at startup, 422 via API); see deltas below |
 | 6 | §6 Report Sharing | ✅ Implemented & verified (COMPLETE) | Report storage/expiration/quota/auto-delete; `ReportSharingOptions` appsettings + `reportsharing.json` persistence; auto-store on client pivot requests; see deltas below |
-| 7 | §3 Database Query | ⬜ Not started | SQLite-only provider (mandatory); future providers incremental |
+| 7 | §3 Database Query | ⬜ Not started | Provider-agnostic DB integration (§3.x added): SQLite + PostgreSQL verified feasible (live Npgsql PoC vs PostgreSQL 17); MySQL/MariaDB/MSSQL/Oracle as optional registered providers |
 | 8 | §7 Client-Side Integration | ⬜ Not started | Sample sends index via `?index=` query |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
@@ -758,8 +758,162 @@ public class DatabaseQuerySettings
 
 **Scenario 3.3.2: Update Database Query Settings**
 - When: `PUT /api/config/databasequery { commandTimeoutEnabled: true, commandTimeLimit: 60 }`
-- Then: Returns 200 with updatue, commandTimeLimit: 60 }`
 - Then: Returns 200 with updated settings
+
+---
+
+## 3.x Database Data Source Integration (STEP 7 — Database Query Integration; REVISED 2026-10)
+
+> **Provenance note (2026-10, PostgreSQL validation pass):** This section was expanded before Step 7
+> implementation. The original §3 covered only the `DatabaseQuerySettings` timeout configuration and
+> listed database providers as "optional stubs" with no connectivity, query execution, retrieval, or
+> indexing detail. A live feasibility check was performed against PostgreSQL 17 using the Npgsql
+> provider (the .NET data provider mandated by the Syncfusion PostgreSQL UG documentation) and the
+> sample `salesdb.salesdata` dataset from that UG; connection via connection string, parameterized
+> SELECT execution, ExpandoObject row mapping, and `CommandTimeout` enforcement were all verified
+> end-to-end before this spec revision. The architecture below is deliberately provider-agnostic so
+> that PostgreSQL, MySQL, MariaDB, Microsoft SQL Server, and Oracle share one implementation path.
+
+### 3.x.1 Supported Providers (Provider-Agnostic Registry)
+
+**SHALL** implement one `DatabaseDataProvider` (implements the existing `IDataSourceProvider`)
+delegating connection creation to pluggable `IDatabaseQueryProvider` implementations, one per
+database system, selectable by the index's `DatabaseType`:
+
+| DatabaseType | Provider class | ADO.NET package | Verified |
+|---|---|---|---|
+| Sqlite | `SqliteQueryProvider` | `Microsoft.Data.Sqlite` | ✅ (live PoC, sandbox) |
+| PostgreSQL | `PostgresqlQueryProvider` | `Npgsql` | ✅ (live PoC vs PostgreSQL 17, sandbox) |
+| MySql | `MySqlQueryProvider` | `MySqlConnector` | optional stub (package absent → 501 provider not available) |
+| MariaDB | `MariadbQueryProvider` | `MySqlConnector` | optional stub (shares MySqlConnector) |
+| MSSQL | `SqlServerQueryProvider` | `Microsoft.Data.SqlClient` | optional stub |
+| Oracle | `OracleQueryProvider` | `Oracle.ManagedDataAccess.Core` | optional stub |
+
+Providers are registered in a registry keyed by `DatabaseType`. Optional providers are registered
+only when their NuGet package is present (feature-detect via reflection or compile-time flag);
+requesting an unavailable provider returns **501 Not Implemented** with a clear message naming the
+missing package — the server never crashes because a provider package is absent.
+
+**Scenario 3.x.1.1: PostgreSQL Index Load**
+- Given: Index with `sourceType: "PostgreSQL"`, `databaseType: "PostgreSQL"`,
+  `connectionStringName: "PivotPostgreSql"`, `query: "SELECT * FROM salesdata"`, and appsettings
+  `ConnectionStrings:PivotPostgreSql` = a valid PostgreSQL connection string
+- When: Index created (or reloaded)
+- Then: Rows returned by the query are mapped to `ExpandoObject` records — the exact same shape
+  produced by `JsonDataProvider`/`CsvDataProvider` — and flow through the identical indexing
+  pipeline (IndexManager load → cache `data:{index}` → pivot engine `engine:{index}:{hash}`)
+
+**Scenario 3.x.1.2: Provider Package Absent**
+- Given: Index with `databaseType: "Oracle"` and the Oracle package not installed
+- When: Index created or loaded
+- Then: Returns 501 `{ error: "Oracle provider requires package 'Oracle.ManagedDataAccess.Core'..." }`
+- And: Server keeps running; other indexes unaffected
+
+### 3.x.2 Connection String Resolution (Configured, Never Inlined)
+
+**SHALL** resolve connection strings by name from the `ConnectionStrings` section of
+`appsettings.json` (following the Syncfusion PostgreSQL UG pattern). Index definitions store a
+`ConnectionStringName` reference — **never** a raw connection string — keeping credentials out of
+`indexes.json` and enabling user-secrets/environment-variable overrides in deployment.
+
+**Scenario 3.x.2.1: Named Connection String Resolves**
+- Given: Index with `connectionStringName: "PivotPostgreSql"`
+- And: appsettings contains `"ConnectionStrings": { "PivotPostgreSql": "Host=localhost;Port=5432;Database=salesdb;Username=postgres;Password=pass" }`
+- When: Index loaded
+- Then: Connection opened with that string; `SELECT * FROM salesdata` executes against `salesdb`
+
+**Scenario 3.x.2.2: Unknown Connection String Name**
+- Given: Index with `connectionStringName: "DoesNotExist"`
+- When: Index created or loaded
+- Then: Validation error (422 on create; `Failed` status + `LastError` on load); connection strings
+  are never logged or echoed in error messages
+
+**PostgreSQL connection string components** (per UG): `Host`, `Port`, `Database`, `Username`,
+`Password` — e.g. `Host=localhost;Port=5432;Database=salesdb;Username=postgres;Password=pass`.
+The same name-based resolution serves MySQL (`Server/Database/Uid/Pwd`), MariaDB (same),
+SQL Server (`Server/Database/User Id/Password`), and Oracle (`User Id/Password/Data Source`) —
+only the string contents differ, so no provider-specific resolution logic is required.
+
+### 3.x.3 Query Execution Rules
+
+**SHALL** execute only a single, read-only SELECT statement per index load.
+
+- The `Query` property must contain exactly one statement (no `;` separators), must start with
+  `SELECT` (leading comments/whitespace tolerated), and must not contain DML/DDL keywords
+  (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `ALTER`, `DROP`, `GRANT`, `TRUNCATE`) —
+  rejected with 422 on create/edit and on load. Read-only execution is the enforced contract:
+  server-side pivot operations (filtering, sorting, aggregation, report generation) never write
+  back to the database.
+- `CommandTimeout` is set from `DatabaseQuery.CommandTimeLimit` when `CommandTimeoutEnabled=true`
+  (0 = infinite, per §3.2); verified live with Npgsql (`SELECT pg_sleep(60)` canceled at limit).
+- Open/execute failures participate in the existing retry policy (`DataStorage.RetryAttempts`
+  with exponential backoff) and `KeepDataOnRefresh` semantics — a failed DB reload behaves
+  exactly like a failed CSV/JSON reload (status `Failed`, prior data kept when configured).
+
+**Scenario 3.x.3.1: Non-SELECT Query Rejected**
+- Given: Index with `query: "DELETE FROM salesdata"`
+- When: `POST /api/indexes`
+- Then: 422 `{ errors: ["Query must be a single read-only SELECT statement"] }`
+
+**Scenario 3.x.3.2: Query Timeout**
+- Given: `commandTimeoutEnabled: true`, `commandTimeLimit: 30`, long-running query
+- When: Index reload
+- Then: Command canceled at 30s; reload fails with retry policy; HTTP 504 when triggered via test-connection/load endpoint
+
+### 3.x.4 Result Mapping & Field Handling
+
+**SHALL** map query results to `List<ExpandoObject>` with column-name keys, identical to other
+providers, so that all downstream server-side operations (field mapping, filtering, sorting,
+aggregation, pivot engine caching, report generation) work unchanged:
+
+- Column names become property names; duplicate or blank column names → load failure (mirrors the
+  CSV header validation in §0.6/§0.7).
+- `DBNull` → `null`.
+- When `MappingEnabled` + `FieldMappings` are set on the index, database values are converted per
+  the declared mapping types (Number/String/Date) exactly as for CSV/JSON; otherwise types are
+  inferred from the ADO.NET driver-reported column types (e.g. Npgsql reports `int`, `varchar`,
+  `timestamp`), and date/datetime values are normalized to the same internal representation used
+  by the other providers.
+- Verified live (Npgsql PoC): `salesdata` rows map to `{ country, product, year, quantity }`
+  ExpandoObjects — the shape the pivot engine already consumes.
+
+**Scenario 3.x.4.1: Same Indexing Pipeline as CSV**
+- Given: Two indexes — "Sales-Csv" (CSV file) and "Sales-Db" (PostgreSQL, same data)
+- When: Both loaded and a pivot request is made against each
+- Then: Identical pivot results (aggregation, filter, sort) for both; cache keys
+  `data:Sales-Csv` / `data:Sales-Db` and `engine:*:{hash}` remain isolated per §0.9
+
+### 3.x.5 Test Connection Endpoint
+
+**SHALL** test connectivity + query execution without persisting or loading data (extends §0.8):
+- `POST /api/indexes/test-connection` with a probe payload
+  `{ databaseType, connectionStringName, query }` → opens the connection, executes the query with
+  a `LIMIT`-bounded read of the first row only, and returns
+  `{ success: true, latencyMs, columns: [...] }` or `502 { success: false, error }`.
+- Per-index variant `POST /api/indexes/{index}/test-connection` uses the index's stored settings.
+
+**Scenario 3.x.5.1: PostgreSQL Connection Success**
+- Given: Valid PostgreSQL connection string name + `SELECT * FROM salesdata`
+- When: `POST /api/indexes/test-connection`
+- Then: 200 `{ success: true, latencyMs: <ms>, columns: ["country","product","year","quantity"] }`
+
+**Scenario 3.x.5.2: PostgreSQL Connection Failure**
+- Given: Wrong host/port or bad credentials in the connection string
+- When: `POST /api/indexes/test-connection`
+- Then: 502 `{ success: false, error: "Unable to connect to PostgreSQL: <provider message>" }`
+
+### 3.x.6 Auto-Reload for Database Indexes
+
+**SHALL** honor `AutoReload` + `ReloadIntervalMinutes` for database indexes via the existing
+`IndexReloadWorker`, re-executing the query on each cycle — the same keep-data-on-refresh,
+per-index semaphore, and `KeepDataOnRefresh` eviction semantics as file-based indexes.
+
+**Scenario 3.x.6.1: Scheduled Database Reload**
+- Given: PostgreSQL index with `autoReload: true`, `reloadIntervalMinutes: 60`, database updated
+  with new rows between cycles
+- When: Reload worker fires
+- Then: Re-executes the query; new rows appear in pivot results; prior data kept if reload fails
+  and `KeepDataOnRefresh=true`
 
 ---
 
