@@ -940,6 +940,13 @@ public class SecurityCorsSettings
 | **Authorization.Password** | — | required when Enabled | **No** |
 | **CORS.AllowOrigin** | "*" | URL, "*" or comma-separated origins | **No** (native CORS policy binds at startup) |
 
+**Origin normalization (clarified):** Browsers send the `Origin` header without a
+trailing slash (`http://localhost:4000`) even when the configured URL carries one
+(`http://localhost:4000/`), and ASP.NET Core CORS matches origins exactly. The
+server therefore strips trailing slashes (and whitespace) from every configured
+origin before comparison, so `http://localhost:4000/` and `http://localhost:4000`
+are equivalent. Multiple origins may be given as a comma-separated list or `*`.
+
 ### 5.2 Basic Authentication Enable/Disable
 
 **Scenario 5.2.1: Auth Disabled (Default)**

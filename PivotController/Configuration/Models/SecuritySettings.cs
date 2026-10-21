@@ -87,8 +87,18 @@ namespace PivotController.Configuration.Models
 
         public bool AllowsAllOrigins => AllowOrigin == "*";
 
+        /// <summary>
+        /// Configured origins, normalized for comparison. Browsers send the Origin header
+        /// WITHOUT a trailing slash ("http://localhost:4000") even when the configured URL
+        /// carries one ("http://localhost:4000/"), and ASP.NET Core CORS matches origins
+        /// exactly — so a trailing slash would silently block every request. Trailing
+        /// slashes (and whitespace) are stripped per entry.
+        /// </summary>
         public string[] Origins => AllowsAllOrigins
             ? Array.Empty<string>()
-            : AllowOrigin.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            : AllowOrigin
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(o => o.TrimEnd('/'))
+                .ToArray();
     }
 }
