@@ -16,8 +16,10 @@
 | 2 | §1 General Settings | ✅ Implemented & verified | All scenarios verified live; see deltas below |
 | 3 | §2 Data Storage Settings | ✅ Implemented & verified | CacheSizeLimit aligned with Flexmonster semantics; see deltas below |
 | 4 | §4 HTTPS Settings | ✅ Implemented & verified (COMPLETE) | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; HTTP/1 & HTTP/2 negotiation; merge-patch API; https.json precedence hardened; test PKI shipped (Cert/PEM-Cert/); verify-https.sh 33 checks; see deltas below |
-| 5–7 | §5–§7 | ⬜ Not started | Security, report sharing, client-side integration |
-| 8 | §3 Database Query | ⬜ Deferred to final | REORDERED to Step 8 — requires DB provider support installed on the machine |
+| 5 | §5 Security Settings | ⬜ Not started | Basic Auth via Authorization.Enabled + CORS via AllowOrigin; credentials in Data Server config (Admin Panel later) |
+| 6 | §6 Report Sharing | ⬜ Not started | Report storage/expiration/quota |
+| 7 | §3 Database Query | ⬜ Not started | SQLite-only provider (mandatory); future providers incremental |
+| 8 | §7 Client-Side Integration | ⬜ Not started | Sample sends index via `?index=` query |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
 
@@ -892,101 +894,121 @@ Key resolution order (`ResolveCertificate`): PFX path → PEM pair → store (`t
 Startup (`Program.cs`): appsettings `Https:*` → guarded `https.json` merge (non-null wins; `enabled:true` only; enums always) → `Validate` fail-fast → `TryResolveValidatedCertificate` (loadability) → HTTPS listener or documented HTTP-only degradation.
 
 
-## 5. Security Settings Configuration (STEP 6)
+## 5. Security Settings Configuration (STEP 5)
+
+**Schema (clarified):** Security settings follow the appsettings.json structure below.
+Credentials (username/password) are created in the Data Server configuration for now;
+they will later be obtained from the Admin Panel (Phase 2).
+
+```json
+"Security": {
+  "Authorization": {
+    "Enabled": true
+  },
+  "CORS": {
+    "AllowOrigin": "https://localhost:4200"
+  }
+}
+```
 
 ### 5.1 Configuration Model
 
 ```csharp
 public class SecuritySettings
 {
-    public bool BasicAuthEnabled { get; set; } = false;
-    public List<string> AllowedOrigins { get; set; } = new() { "*" };
+    public SecurityAuthorizationSettings Authorization { get; set; } = new();
+    public SecurityCorsSettings CORS { get; set; } = new();
+}
+
+public class SecurityAuthorizationSettings
+{
+    public bool Enabled { get; set; } = false;
+    public string? Username { get; set; }   // Data Server credential (Admin Panel later)
+    public string? Password { get; set; }    // Data Server credential (Admin Panel later)
+}
+
+public class SecurityCorsSettings
+{
+    public string AllowOrigin { get; set; } = "*";
 }
 ```
+
+| Property | Default | Validation | Requires Restart |
+|----------|---------|------------|:---:|
+| **Authorization.Enabled** | false | bool | **No** |
+| **Authorization.Username** | — | required when Enabled | **No** |
+| **Authorization.Password** | — | required when Enabled | **No** |
+| **CORS.AllowOrigin** | "*" | URL, "*" or comma-separated origins | **No** (native CORS policy binds at startup) |
 
 ### 5.2 Basic Authentication Enable/Disable
 
 **Scenario 5.2.1: Auth Disabled (Default)**
-- Given: `basicAuthEnabled: false`
+- Given: `authorization.enabled: false`
 - When: Request sent without Authorization header
 - Then: Processed normally
 
 **Scenario 5.2.2: Auth Enabled**
-- Given: `basicAuthEnabled: true`
+- Given: `authorization.enabled: true`, credentials configured in the Data Server
 - When: Request sent without Authorization header
 - Then: Returns 401 Unauthorized with `WWW-Authenticate: Basic realm`
 
 **Scenario 5.2.3: Valid Credentials**
-- Given: User "admin" with password "password", auth enabled
-- When: Request with `Authorization: Basic YWRtaW46cGFzc3dvcmQ=` (base64)
+- Given: Auth enabled, Data Server credentials username/password configured
+- When: Request with `Authorization: Basic <base64(username:password)>`
 - Then: Processed successfully
 
 **Scenario 5.2.4: Invalid Credentials**
 - Given: Auth enabled
-- When: Request with `Authorization: Basic aW52YWxpZDppbnZhbGlk` (invalid)
+- When: Request with wrong credentials
 - Then: Returns 401 with `WWW-Authenticate: Basic realm`
 
-**Scenario 5.2.5: First User Creation (Anonymous)**
-- Given: Auth enabled, no users exist
-- When: `POST /api/security/users { username: "admin", password: "password" }`
-- Then: Returns 201 (first user allowed anonymous)
-- And: User created with PBKDF2-hashed password
-
-**Scenario 5.2.6: Subsequent User Creation (Auth Required)**
-- Given: Auth enabled, admin user exists
-- When: Unauthenticated `POST /api/security/users { username: "user2", password: "pwd" }`
-- Then: Returns 401 (must authenticate)
+**Scenario 5.2.5: Enabled Without Credentials**
+- Given: `authorization.enabled: true`, no username/password in Data Server config
+- When: Application starts
+- Then: Startup fails fast with a clear message (or auth disabled with loud log) —
+  credentials must be created in the Data Server configuration (Admin Panel later)
 
 ### 5.3 CORS Origin Validation
 
+**Behavior (clarified):** The Data Server uses **native ASP.NET Core CORS middleware
+behavior** — requests failing CORS validation do NOT receive the required CORS headers
+and are blocked by the browser according to standard browser CORS enforcement
+behavior. The server does NOT return an explicit `403 Forbidden` for CORS-blocked
+requests.
+
 **Scenario 5.3.1: Allow All Origins (Default)**
-- Given: `allowedOrigins: ["*"]`
+- Given: `allowOrigin: "*"`
 - When: Request from any origin
-- Then: CORS headers allow all
-- And: Request proceeds
+- Then: CORS headers allow all; request proceeds
 
-**Scenario 5.3.2: Specific Origins Only**
-- Given: `allowedOrigins: ["https://app.example.com", "https://app2.example.com"]`
-- When: Request from https://app.example.com
-- Then: CORS headers allow origin
-- When: Request from https://other.com
-- Then: Returns 403 Forbidden (CORS blocked)
+**Scenario 5.3.2: Specific Origin Only**
+- Given: `allowOrigin: "https://localhost:4200"`
+- When: Request from https://localhost:4200
+- Then: CORS headers allow origin; request proceeds
+- When: Request from any other origin
+- Then: No CORS headers returned; browser blocks access per standard CORS enforcement
 
-**Scenario 5.3.3: No Origin Header (CSRF Defense)**
-- Given: Restricted origins configured
-- When: Request without Origin header (non-browser)
-- Then: Returns 403 (CSRF defense-in-depth)
+**Scenario 5.3.3: No Origin Header (Non-Browser Client)**
+- Given: Any AllowOrigin configuration
+- When: Request without Origin header (non-browser client such as curl)
+- Then: Request processed normally (CORS is a browser enforcement mechanism)
 
-### 5.4 User Management APIs
+### 5.4 Security API
 
-**Scenario 5.4.1: Create User**
-- When: `POST /api/security/users { username: "analyst", password: "secure123" }`
-- Then: Returns 201 with user created
-- And: Password hashed (PBKDF2)
-
-**Scenario 5.4.2: List Users**
-- When: `GET /api/security/users`
-- Then: Returns 200 with username list
-- And: Passwords not returned
-
-**Scenario 5.4.3: Delete User**
-- When: `DELETE /api/security/users/analyst`
-- Then: Returns 204
-- And: User removed
-
-### 5.5 Security API
-
-**Scenario 5.5.1: Get Security Settings**
+**Scenario 5.4.1: Get Security Settings**
 - When: `GET /api/config/security`
-- Then: Returns 200 with `basicAuthEnabled` and `allowedOrigins`
+- Then: Returns 200 with `{ authorization: { enabled }, cors: { allowOrigin } }`
+- And: Password is never returned
 
-**Scenario 5.5.2: Update Security Settings**
-- When: `PUT /api/config/security { basicAuthEnabled: true, allowedOrigins: ["https://app.example.com"] }`
+**Scenario 5.4.2: Update Security Settings**
+- When: `PUT /api/config/security { authorization: { enabled: true }, cors: { allowOrigin: "https://localhost:4200" } }`
 - Then: Returns 200, applied immediately
+- And: Credentials (username/password) come from the Data Server configuration; they
+  are not set via this API (Admin Panel later)
 
 ---
 
-## 6. Report Sharing Settings Configuration (STEP 7)
+## 6. Report Sharing Settings Configuration (STEP 6)
 
 ### 6.1 Configuration Model
 
