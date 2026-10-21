@@ -46,11 +46,10 @@ namespace PivotController.Configuration.Services
                 if (string.IsNullOrWhiteSpace(settings.PemKeyPath)) errors.Add("pemKeyPath is required when pemCertPath is set.");
                 else if (!File.Exists(settings.PemKeyPath)) errors.Add($"PEM key file not found: {settings.PemKeyPath}");
             }
-            if ((!string.IsNullOrWhiteSpace(settings.Thumbprint) || !string.IsNullOrWhiteSpace(settings.SubjectName)) && !OperatingSystem.IsWindows())
-            {
-                errors.Add("Certificate store lookup is only supported on Windows; use pfxPath or pemCertPath.");
-            }
-            else if (!string.IsNullOrWhiteSpace(settings.Thumbprint) && !string.IsNullOrWhiteSpace(settings.SubjectName))
+            // X509Store is cross-platform (OpenSSL-backed on Linux/macOS, SChannel on Windows):
+            // the store lookup is no longer Windows-gated — it works everywhere, with a
+            // location fallback (CurrentUser <-> LocalMachine) in ResolveCertificate.
+            if (!string.IsNullOrWhiteSpace(settings.Thumbprint) && !string.IsNullOrWhiteSpace(settings.SubjectName))
             {
                 errors.Add("Configure either thumbprint or subjectName for the store lookup, not both.");
             }
@@ -94,42 +93,64 @@ namespace PivotController.Configuration.Services
             }
             bool storeByThumbprint = !string.IsNullOrWhiteSpace(settings.Thumbprint);
             bool storeBySubject = !string.IsNullOrWhiteSpace(settings.SubjectName);
-            if ((storeByThumbprint || storeBySubject) && OperatingSystem.IsWindows())
+            if (storeByThumbprint || storeBySubject)
             {
                 if (storeByThumbprint && storeBySubject)
                 {
                     throw new InvalidOperationException("Configure either thumbprint or subjectName for the store lookup, not both.");
                 }
-                var storeLocation = settings.StoreLocation == CertificateStoreLocationOption.LocalMachine
+                var configuredLocation = settings.StoreLocation == CertificateStoreLocationOption.LocalMachine
                     ? System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine
                     : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
-                // Explicit null in appsettings.json (e.g. "StoreName": null) must NOT clobber
-                // the default — X509Store(null) throws and startup degrades to HTTP-only.
+                // Search the configured location first, then fall back to the other one:
+                // a certificate commonly lives in LocalMachine\My while a null/defaulted
+                // StoreLocation resolves to CurrentUser (and vice versa) — a strict
+                // single-location miss would degrade the server to an HTTP listener.
+                // X509Store is cross-platform (OpenSSL-backed on Linux/macOS), so this
+                // lookup also works outside Windows.
                 var storeName = string.IsNullOrWhiteSpace(settings.StoreName) ? "My" : settings.StoreName;
-                using var store = new X509Store(storeName, storeLocation);
-                store.Open(OpenFlags.ReadOnly);
                 var findType = storeByThumbprint ? X509FindType.FindByThumbprint : X509FindType.FindBySubjectName;
                 var findValue = storeByThumbprint ? settings.Thumbprint! : settings.SubjectName!;
-                var found = store.Certificates.Find(findType, findValue, validOnly: false);
-                if (found.Count == 0)
+                var locations = new[] { configuredLocation,
+                    configuredLocation == System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser
+                        ? System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine
+                        : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser };
+                foreach (var storeLocation in locations)
                 {
-                    throw new InvalidOperationException($"Certificate with {(storeByThumbprint ? $"thumbprint '{settings.Thumbprint}'" : $"subject name '{settings.SubjectName}'")} not found in store {storeLocation}/{storeName}.");
+                    using var store = new X509Store(storeName, storeLocation);
+                    try { store.Open(OpenFlags.ReadOnly); }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Certificate store {Location}/{Store} could not be opened; trying next location.", storeLocation, storeName);
+                        continue;
+                    }
+                    var found = store.Certificates.Find(findType, findValue, validOnly: false);
+                    if (found.Count == 0)
+                    {
+                        _logger.LogInformation("Certificate {Lookup} not found in store {Location}/{Store}; trying next location.",
+                            findValue, storeLocation, storeName);
+                        continue;
+                    }
+                    // Pick the first entry that actually has a usable private key (subject-name
+                    // lookups can match multiple certificates; thumbprint matches cannot).
+                    X509Certificate2? candidate = null;
+                    foreach (var c in found)
+                    {
+                        if (c.HasPrivateKey) { candidate = c; break; }
+                    }
+                    if (candidate is null)
+                    {
+                        throw new InvalidOperationException(
+                            $"Certificate '{findValue}' in store {storeLocation}/{storeName} has no private key and cannot serve TLS. " +
+                            "Import the certificate with its private key (and mark it exportable if needed).");
+                    }
+                    _logger.LogInformation("HTTPS certificate loaded from certificate store {Location}/{Store} by {Lookup} (configured location: {Configured}).",
+                        storeLocation, storeName, storeByThumbprint ? "thumbprint" : "subject name", configuredLocation);
+                    return candidate;
                 }
-                // Pick the first entry that actually has a usable private key (subject-name
-                // lookups can match multiple certificates; thumbprint matches cannot).
-                X509Certificate2? candidate = null;
-                foreach (var c in found)
-                {
-                    if (c.HasPrivateKey) { candidate = c; break; }
-                }
-                if (candidate is null)
-                {
-                    throw new InvalidOperationException(
-                        $"Certificate '{(storeByThumbprint ? settings.Thumbprint : settings.SubjectName)}' in store {storeLocation}/{storeName} has no private key and cannot serve TLS. " +
-                        "Import the certificate with its private key (and mark it exportable if needed).");
-                }
-                _logger.LogInformation("HTTPS certificate loaded from Windows store {Location}/{Store} by {Lookup}.", storeLocation, storeName, storeByThumbprint ? "thumbprint" : "subject name");
-                return candidate;
+                throw new InvalidOperationException(
+                    $"Certificate with {(storeByThumbprint ? $"thumbprint '{settings.Thumbprint}'" : $"subject name '{settings.SubjectName}'")} not found in store '{storeName}' in CurrentUser or LocalMachine. " +
+                    "Check the thumbprint (no spaces, correct case), the subject name, and that the certificate is imported with its private key.");
             }
             throw new InvalidOperationException("HTTPS enabled but no certificate source configured.");
         }
