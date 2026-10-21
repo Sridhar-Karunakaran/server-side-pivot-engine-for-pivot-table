@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using PivotController.Configuration.Models;
+using PivotController.Data.Providers;
 using PivotController.Indexing;
 
 namespace PivotController.Configuration.Controllers
@@ -11,6 +12,9 @@ namespace PivotController.Configuration.Controllers
     public class IndexController : ControllerBase
     {
         private readonly IIndexManager _indexManager;
+        private readonly IDataSourceProviderFactory _providerFactory;
+        private readonly Microsoft.Extensions.Options.IOptions<DatabaseQuerySettings> _querySettings;
+        private readonly IConfiguration _configuration;
 
         private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
@@ -24,9 +28,12 @@ namespace PivotController.Configuration.Controllers
             return options;
         }
 
-        public IndexController(IIndexManager indexManager)
+        public IndexController(IIndexManager indexManager, IDataSourceProviderFactory providerFactory, Microsoft.Extensions.Options.IOptions<DatabaseQuerySettings> querySettings, IConfiguration configuration)
         {
             _indexManager = indexManager;
+            _providerFactory = providerFactory;
+            _querySettings = querySettings;
+            _configuration = configuration;
         }
 
         [HttpGet]
@@ -97,10 +104,72 @@ namespace PivotController.Configuration.Controllers
             return Ok(_indexManager.GetIndexStatus(index));
         }
 
-        [HttpPost]
-        public async Task<ActionResult<IndexStatusResponse>> Create([FromBody] IndexDefinition definition)
+        /// <summary>Tests database connectivity + query execution without loading or persisting data (spec §3.x.5).</summary>
+        [HttpPost("test-connection")]
+        public async Task<ActionResult> TestConnection([FromBody] TestConnectionRequest request)
+        {
+            if (request.DatabaseType is not { } dbType)
+            {
+                return UnprocessableEntity(new { success = false, error = "databaseType is required." });
+            }
+            var dbProvider = (DatabaseDataProvider)_providerFactory.Create(ToDataSourceType(dbType));
+            try
+            {
+                return await ExecuteTestAsync(dbProvider, dbType, request.ConnectionStringName, request.ConnectionString, request.Query).ConfigureAwait(false);
+            }
+            catch (DatabaseProviderUnavailableException ex)
+            {
+                return StatusCode(StatusCodes.Status501NotImplemented, new { success = false, error = ex.Message });
+            }
+        }
+
+        /// <summary>Per-index variant: uses the index's stored database settings (spec §3.x.5).</summary>
+        [HttpPost("{index}/test-connection")]
+        public async Task<ActionResult> TestConnectionForIndex(string index)
+        {
+            if (!_indexManager.TryGetDefinition(index, out var definition))
+            {
+                return NotFound(new { error = $"Index '{index}' not found." });
+            }
+            if (definition.DatabaseType is not { } dbType)
+            {
+                return UnprocessableEntity(new { success = false, error = $"Index '{index}' is not a database index." });
+            }
+            var dbProvider = (DatabaseDataProvider)_providerFactory.Create(definition.SourceType);
+            return await ExecuteTestAsync(dbProvider, dbType, definition.ConnectionStringName, definition.ConnectionString, definition.Query).ConfigureAwait(false);
+        }
+
+        private async Task<ActionResult> ExecuteTestAsync(DatabaseDataProvider dbProvider, DatabaseType dbType, string? connectionStringName, string? inlineConnectionString, string? query)
         {
             try
+            {
+                var (success, error, latencyMs, columns) = await dbProvider.TestConnectionAsync(dbType, connectionStringName, query, HttpContext.RequestAborted, inlineConnectionString).ConfigureAwait(false);
+                if (!success)
+                {
+                    return StatusCode(StatusCodes.Status502BadGateway, new { success = false, error });
+                }
+                return Ok(new { success = true, latencyMs, columns });
+            }
+            catch (DatabaseProviderUnavailableException ex)
+            {
+                return StatusCode(StatusCodes.Status501NotImplemented, new { success = false, error = ex.Message });
+            }
+        }
+
+        private static DataSourceType ToDataSourceType(DatabaseType dbType) => dbType switch
+        {
+            DatabaseType.Sqlite => DataSourceType.Sqlite,
+            DatabaseType.PostgreSQL => DataSourceType.PostgreSQL,
+            DatabaseType.MSSQL => DataSourceType.SqlServer,
+            DatabaseType.MySql => DataSourceType.MySql,
+            DatabaseType.MariaDB => DataSourceType.MariaDb,
+            DatabaseType.Oracle => DataSourceType.Oracle,
+            _ => throw new NotSupportedException($"Database type '{dbType}' is not supported."),
+        };
+
+        [HttpPost]
+        public async Task<ActionResult<IndexStatusResponse>> Create([FromBody] IndexDefinition definition)
+        {            try
             {
                 var status = await _indexManager.CreateIndexAsync(definition).ConfigureAwait(false);
                 return StatusCode(StatusCodes.Status201Created, status);

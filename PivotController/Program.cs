@@ -13,6 +13,12 @@ var dataServerSettings = builder.Configuration.GetSection(DataServerSettings.Sec
 builder.Services.AddSingleton(dataServerSettings);
 builder.Services.AddSingleton<AtomicJsonStore>();
 builder.Services.AddSingleton<IndexStore>();
+
+// Database Query Settings (Step 7 — Database Query Integration, spec §3.1/§3.x):
+// command timeout for all database indexes; runtime-applicable via the config API.
+builder.Services.Configure<DatabaseQuerySettings>(builder.Configuration.GetSection("DatabaseQuery"));
+builder.Services.AddSingleton<IDatabaseQueryProviderFactory, DatabaseQueryProviderRegistry>();
+
 builder.Services.AddSingleton<IDataSourceProviderFactory, DataSourceProviderFactory>();
 builder.Services.AddSingleton<IIndexManager, IndexManager>();
 builder.Services.AddHostedService<IndexReloadWorker>();

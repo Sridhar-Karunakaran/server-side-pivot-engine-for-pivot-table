@@ -2,7 +2,7 @@
 
 **Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** Steps 1–6 implemented & verified (Index, General, Data Storage, HTTPS, Security, **Report Sharing COMPLETE**). Next: Step 7 Client-Side Integration.
+**Status:** Steps 1–6 implemented & verified (Index, General, Data Storage, HTTPS, Security, **Report Sharing COMPLETE**). **§3.x Database Data Source Integration (DB fetching/indexing) implemented & verified live** (PostgreSQL 17 via Npgsql + SQLite; spec §3.x, design §9). Next: Step 7 Client-Side Integration; the Database Query Settings step (Command timeout / Command time limit ONLY — NOT data fetching) is last. Step 7 implementation is awaiting user approval.
 
 ---
 
@@ -509,54 +509,84 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 
 ---
 
-## Phase 4: Database Query Settings (DEFERRED — reordered to Step 8 / Final; requires DB support on the machine)
+## Phase 4: Database Query Settings (DEFERRED — reordered to last; Step 7 = Command timeout / Command time limit ONLY)
 
 *Estimated: 1-2 days*
 
+> **Scope correction (2026-10, user direction):** This phase is **only** the `Command timeout` /
+> `Command time limit` options (§3.1–§3.3) applied while executing queries for database indexes.
+> It does NOT cover fetching/indexing DB data — that is §3.x (Database Data Source Integration),
+> which is already implemented and verified live. DB data can be indexed before this phase ships.
+
+*Update 2026-10 (§3.x validation pass):* PostgreSQL verified live — PostgreSQL 17 installed in
+sandbox, `salesdb.salesdata` sample data created per the Syncfusion PostgreSQL UG, and an Npgsql
+PoC confirmed connection-string login, parameterized SELECT execution, ExpandoObject mapping
+(same shape as CSV/JSON providers), and CommandTimeout enforcement. §3.x implemented: SQLite +
+PostgreSQL providers shipped; MySQL/MariaDB/MSSQL/Oracle return 501 until their packages are added.
+
 ### 4.1 Database Provider Abstraction
 
-**Objective:** Implement pluggable database provider pattern
+**Objective:** Implement pluggable database provider pattern (provider-agnostic; one path for
+PostgreSQL, MySQL, MariaDB, MSSQL, Oracle, SQLite)
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Data/Providers/IDatabaseQueryProvider.cs`
-  - Properties: SourceType
+- [x] Create file: `PivotController/Data/Providers/IDatabaseQueryProvider.cs`
+  - Properties: DatabaseType (keyed by DatabaseType, not SourceType)
   - Methods: CreateConnection(connectionString)
-- [ ] Create file: `PivotController/Data/Providers/SqliteQueryProvider.cs` (mandatory)
-  - Implement for SQLite connections
-- [ ] Create stub files (optional, documented):
-  - `SqlServerQueryProvider.cs` (requires System.Data.SqlClient package)
-  - `PostgresqlQueryProvider.cs` (requires Npgsql package)
+- [x] Create file: `PivotController/Data/Providers/SqliteQueryProvider.cs` (mandatory)
+  - Implement for SQLite connections (Microsoft.Data.Sqlite)
+- [x] Create file: `PivotController/Data/Providers/PostgresqlQueryProvider.cs` (mandatory — verified feasible)
+  - Uses Npgsql (per Syncfusion PostgreSQL UG): `new NpgsqlConnection(connectionString)`
+- [x] Create stub files (optional, feature-detected registration; 501 when package absent):
+  - `SqlServerQueryProvider.cs` (requires Microsoft.Data.SqlClient package)
   - `MySqlQueryProvider.cs` (requires MySqlConnector package)
-  - etc.
-- [ ] Create file: `PivotController/Data/Providers/DatabaseDataProvider.cs`
-  - Implement IDataSourceProvider
-  - Use IDatabaseQueryProvider factory to create connection
-  - Execute query with timeout
-  - Map results to ExpandoObject[]
+  - `MariadbQueryProvider.cs` (requires MySqlConnector package)
+  - `OracleQueryProvider.cs` (requires Oracle.ManagedDataAccess.Core package)
+- [x] Create file: `PivotController/Data/Providers/DatabaseQueryProviderRegistry.cs`
+  - Maps DatabaseType → provider; unavailable provider → clear 501 error naming the missing package
+- [ ] Implement connection string resolution by name (index.ConnectionStringName → config
+  `ConnectionStrings:{name}` / user-secrets; unknown name → 422/validation error; never log secrets)
+- [ ] Implement query validation: single read-only SELECT, no `;`, no DML/DDL keywords → 422
+- [x] Create file: `PivotController/Data/Providers/DatabaseDataProvider.cs`
+  - Implement IDataSourceProvider (same LoadAsync contract as CSV/JSON)
+  - Use IDatabaseQueryProvider registry to create connection
+  - Execute query with CommandTimeout per DatabaseQuerySettings
+  - Map results to List<ExpandoObject> (column names → properties; DBNull → null; mapping per
+    FieldMappings when enabled, else driver-reported types)
+- [ ] Modify `DataSourceProviderFactory` to route SqlServer/PostgreSQL/MySql/Oracle/MariaDb/Sqlite
+  SourceTypes to DatabaseDataProvider
+- [ ] IndexDefinition.Validate(): require DatabaseType + ConnectionStringName + Query for DB
+  source types; validate query safety rules
+- [ ] Implement `POST /api/indexes/test-connection` (+ per-index variant) per spec §3.x.5
 
 **Verification:**
 - [ ] SQLite provider works (mandatory)
-- [ ] Optional providers gracefully missing (reflection-registered only if package present)
-- [ ] Query execution returns data or timeout error
+- [ ] PostgreSQL provider works against live PostgreSQL with connection string from
+  appsettings `ConnectionStrings` and `SELECT * FROM salesdata` (UG flow)
+- [ ] DB rows produce identical pivot results to a CSV index holding the same data (same
+  engine pipeline: filter/sort/aggregate/report) — spec §3.x.4.1
+- [x] Optional providers gracefully missing (501 naming missing package; server keeps running) — VERIFIED live: Oracle test-connection → 501
+- [ ] Query validation rejects multi-statement and DML queries (422)
+- [x] Query execution returns data or timeout error — VERIFIED live: 8 rows from PostgreSQL, timeout enforced (Npgsql PoC) (504 surface; CommandTimeout verified live)
 
-**Specification Mapping:** 5.1, 5.2, 5.3, 14.1
+**Specification Mapping:** 3.x.1–3.x.6, 0.8, 5.1, 5.2, 5.3, 14.1
 
 ---
 
-### 3.2 Query Timeout Enforcement
+### 3.2 Query Timeout Enforcement (Step 7 core: Command timeout / Command time limit)
 
 **Objective:** Enforce CommandTimeLimit on queries
 
 **Subtasks:**
-- [ ] Modify `DatabaseDataProvider`:
+- [x] Modify `DatabaseDataProvider`:
   - If `CommandTimeoutEnabled=true`, set `command.CommandTimeout = CommandTimeLimit`
   - If `CommandTimeLimit=0`, set `CommandTimeout = 0` (infinite)
   - On timeout: catch timeout exception, log, return 504
 
 **Verification:**
-- [ ] Query within timeout completes normally
-- [ ] Long-running query canceled at timeout threshold; returns 504
-- [ ] Timeout disabled (0): query runs indefinitely
+- [x] Query within timeout completes normally
+- [x] Long-running query canceled at timeout threshold; returns 504
+- [x] Timeout disabled (0): query runs indefinitely
 
 **Specification Mapping:** 5.1
 

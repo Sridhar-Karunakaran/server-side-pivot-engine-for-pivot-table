@@ -1,4 +1,7 @@
 using System.Dynamic;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using PivotController.Configuration.Models;
 
 namespace PivotController.Data.Providers
@@ -10,19 +13,31 @@ namespace PivotController.Data.Providers
 
     public class DataSourceProviderFactory : IDataSourceProviderFactory
     {
-        private readonly Dictionary<DataSourceType, IDataSourceProvider> _providers = new()
+        private readonly DatabaseDataProvider _databaseProvider;
+
+        public DataSourceProviderFactory(
+            IOptions<DatabaseQuerySettings> querySettings,
+            IConfiguration configuration,
+            ILoggerFactory? loggerFactory = null)
         {
-            [DataSourceType.Json] = new JsonDataProvider(),
-            [DataSourceType.Csv] = new CsvDataProvider(),
-        };
+            _databaseProvider = new DatabaseDataProvider(
+                new DatabaseQueryProviderRegistry(),
+                querySettings,
+                configuration,
+                loggerFactory?.CreateLogger<DatabaseDataProvider>());
+        }
 
         public IDataSourceProvider Create(DataSourceType sourceType)
         {
-            if (_providers.TryGetValue(sourceType, out var provider))
+            return sourceType switch
             {
-                return provider;
-            }
-            throw new NotSupportedException($"SourceType '{sourceType}' is not supported yet (database indexes arrive in a later phase).");
+                DataSourceType.Json => new JsonDataProvider(),
+                DataSourceType.Csv => new CsvDataProvider(),
+                DataSourceType.Sqlite or DataSourceType.PostgreSQL
+                    or DataSourceType.SqlServer or DataSourceType.MySql
+                    or DataSourceType.MariaDb or DataSourceType.Oracle => _databaseProvider,
+                _ => throw new NotSupportedException($"SourceType '{sourceType}' is not supported."),
+            };
         }
     }
 }

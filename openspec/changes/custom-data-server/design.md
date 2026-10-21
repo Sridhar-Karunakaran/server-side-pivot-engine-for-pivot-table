@@ -400,23 +400,71 @@ POST /api/indexes/{index}/enable
   └─ Return 200 { status: Ready/Failed, rowCount }
 ```
 
-### 9. Database Query Processing
+### 9. Database Data Source Integration (REVISED 2026-10 — fetching/indexing layer, verified live; independent of the Command timeout / Command time limit step)
 
-**Provider Abstraction:**
+**Provider Abstraction (provider-agnostic registry keyed by `DatabaseType`):**
 ```csharp
 public interface IDatabaseQueryProvider
 {
-    DataSourceType SourceType { get; }
+    DatabaseType DatabaseType { get; }
     DbConnection CreateConnection(string connectionString);
 }
 
-// Implementation
-public class SqliteQueryProvider : IDatabaseQueryProvider
+// Registry (DI-registered; optional providers feature-detected)
+SqliteQueryProvider      // Microsoft.Data.Sqlite   — verified (live PoC)
+PostgresqlQueryProvider  // Npgsql                  — verified (live PoC vs PostgreSQL 17)
+MySqlQueryProvider       // MySqlConnector          — optional stub
+MariadbQueryProvider     // MySqlConnector          — optional stub
+SqlServerQueryProvider   // Microsoft.Data.SqlClient— optional stub
+OracleQueryProvider      // Oracle.ManagedDataAccess.Core — optional stub
+
+// Implementation example (Npgsql — the provider mandated by the Syncfusion PostgreSQL UG)
+public class PostgresqlQueryProvider : IDatabaseQueryProvider
 {
+    public DatabaseType DatabaseType => DatabaseType.PostgreSQL;
     public DbConnection CreateConnection(string connectionString)
-        => new SqliteConnection(connectionString);
+        => new NpgsqlConnection(connectionString);
 }
 ```
+If a requested provider's NuGet package is not present, `Create(DatabaseType)` returns
+501 "provider not available" — never a crash (verified requirement 4.1 of tasks.md).
+
+**Connection String Resolution (per user direction 2026-10):** inline `ConnectionString` on the
+index definition takes precedence; `ConnectionStringName` from `ConnectionStrings` in
+appsettings/user-secrets (PostgreSQL UG: `Host`, `Port`, `Database`, `Username`, `Password`) is the
+fallback. At least one is required. Connection string values are never logged.
+
+**Query Rules:** single read-only SELECT only; no `;` multi-statements; DML/DDL keywords
+rejected (422). No write-backs — server-side pivot (filter/sort/aggregate/report) is read-only
+over the fetched snapshot.
+
+**Query Execution Pipeline:**
+```
+Validate Query (single SELECT, no ';', no DML/DDL)        [422 on create/edit]
+  ↓
+Resolve ConnectionString (config:ConnectionStrings / user-secrets, by name)
+  ↓
+CreateConnection via IDatabaseQueryProvider for definition.DatabaseType   [501 if pkg absent]
+  ↓
+OpenAsync(timeout budget starts; retried per DataStorage.RetryAttempts w/ backoff)
+  ↓
+CommandTimeout = DatabaseQuery.CommandTimeLimit (when CommandTimeoutEnabled; 0 = infinite)
+  ↓
+ExecuteReaderAsync(ct)
+  ├─ Timeout → Cancel command → DatabaseTimeoutException → Retry logic (504 surface)
+  ├─ Transient → Retry (backoff)
+  └─ Success → Map to List<ExpandoObject>
+    ├─ Column names = property names; duplicate/blank → load failure
+    ├─ DBNull → null; types from driver (or FieldMappings when MappingEnabled)
+    └─ Return rows → IndexManager (identical pipeline to CSV/JSON)
+```
+
+**Verified live (PostgreSQL 17 + Npgsql, sandbox PoC):** connection by connection string to
+`salesdb`, parameterized `SELECT * FROM salesdata WHERE quantity > @min` → 7 rows mapped to
+`{ country, product, year, quantity }` ExpandoObjects (identical shape to CSV/JSON providers);
+`CommandTimeout=1` on `SELECT pg_sleep(60)` canceled the command as required for §3.2 timeout
+semantics. This confirms the architecture supports PostgreSQL retrieval through connection
+strings and query execution with zero pipeline changes — only the provider class differs.
 
 **Query Execution Pipeline:**
 ```

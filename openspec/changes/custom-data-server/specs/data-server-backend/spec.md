@@ -4,7 +4,7 @@
 
 **Version:** 2.2
 
-**Implementation Order (reordered 2026-10):** Index Configuration (Step 1) → General Settings → Data Storage Settings → **HTTPS Settings (Step 4)** → Security Settings (Step 5) → Report Sharing Settings (Step 6) → Client-Side Integration (Step 7) → **Database Query Settings (Step 8 - FINAL)** — deferred to last because it requires DB provider support installed on the machine; no other step depends on it.
+**Implementation Order (reordered 2026-10):** Index Configuration (Step 1) → General Settings → Data Storage Settings → **HTTPS Settings (Step 4)** → Security Settings (Step 5) → Report Sharing Settings (Step 6) → Client-Side Integration (Step 7) → **Database Query Settings (Step 8 - FINAL)** — deferred to last because it requires DB provider support installed on the machine; no other step depends on it. **Scope note:** the Database Query Settings step configures only `Command timeout` / `Command time limit` (§3.1–§3.3); DB data fetching and indexing is §3.x (implemented & verified) and works independently of that step.
 
 ---
 
@@ -18,7 +18,8 @@
 | 4 | §4 HTTPS Settings | ✅ Implemented & verified (COMPLETE) | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; HTTP/1 & HTTP/2 negotiation; merge-patch API; https.json precedence hardened; test PKI shipped (Cert/PEM-Cert/); verify-https.sh 33 checks; see deltas below |
 | 5 | §5 Security Settings | ✅ Implemented & verified (COMPLETE) | Basic Auth (Authorization.Enabled + Data Server credentials) + CORS (AllowOrigin; specific origins required when auth enabled, never '*', fail-fast at startup, 422 via API); see deltas below |
 | 6 | §6 Report Sharing | ✅ Implemented & verified (COMPLETE) | Report storage/expiration/quota/auto-delete; `ReportSharingOptions` appsettings + `reportsharing.json` persistence; auto-store on client pivot requests; see deltas below |
-| 7 | §3 Database Query | ⬜ Not started | SQLite-only provider (mandatory); future providers incremental |
+| 7 | §3 Database Query Settings | ⬜ Not started (Step 7 = Command timeout / Command time limit ONLY; DB fetching/indexing is §3.x, already verified) | DB data can be indexed before Step 7; Step 7 tunes query timeouts only |
+| — | §3.x Database Data Source Integration | ✅ Implemented & verified live | PostgreSQL 17 via Npgsql + SQLite; connection-string-by-name, single-SELECT rule, ExpandoObject mapping into shared pipeline; MySQL/MariaDB/MSSQL/Oracle optional (501 until packages added) |
 | 8 | §7 Client-Side Integration | ⬜ Not started | Sample sends index via `?index=` query |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
@@ -719,11 +720,19 @@ public class DataStorageSettings
 
 ### 3.1 Configuration Model
 
+> **Step 7 scope (per user direction, 2026-10):** This section configures ONLY the two
+> database-query timeout options below. It is NOT about fetching/indexing DB data (see §3.x,
+> which is implemented and verified independently).
+
 ```csharp
 public class DatabaseQuerySettings
 {
+    /// <summary>Command timeout: enables the Command time limit. When disabled, the Data Server
+    /// defers to the SQL driver's own timeout. Database data source type only. Default: false.</summary>
     public bool CommandTimeoutEnabled { get; set; } = false;
-    public int CommandTimeLimit { get; set; } = 150;  // seconds
+    /// <summary>Command time limit: wait time in seconds before canceling the query attempt and
+    /// generating an error. 0 = unlimited. Database data source type only. Default: 150.</summary>
+    public int CommandTimeLimit { get; set; } = 150;
 }
 ```
 
@@ -758,8 +767,253 @@ public class DatabaseQuerySettings
 
 **Scenario 3.3.2: Update Database Query Settings**
 - When: `PUT /api/config/databasequery { commandTimeoutEnabled: true, commandTimeLimit: 60 }`
-- Then: Returns 200 with updatue, commandTimeLimit: 60 }`
 - Then: Returns 200 with updated settings
+
+---
+
+## 3.x Database Data Source Integration (DATA FETCHING/INDEXING — NOT Step 7; REVISED 2026-10)
+
+> **Scope clarification (2026-10, per user direction):** This section covers DB data fetching and
+> indexing (connection, query execution, retrieval, indexing pipeline) and is **independent of
+> Step 7 "Database Query Settings"**. Step 7 (§3.1–§3.3) configures ONLY two options:
+> `Command timeout` (enables the Command time limit; when disabled the Data Server defers to the
+> SQL driver's own timeout; DB data source type only; default: disabled) and `Command time limit`
+> (wait time in seconds before canceling a query attempt and generating an error; 0 = unlimited;
+> DB data source type only; default: 150). DB data can be indexed BEFORE Step 7 is implemented —
+> Step 7 only tunes query timeouts for those indexes.
+>
+> **Provenance note (2026-10, PostgreSQL validation pass):** A live feasibility check was performed
+> against PostgreSQL 17 using the Npgsql provider (the .NET data provider mandated by the Syncfusion
+> PostgreSQL UG documentation) and the sample `salesdb.salesdata` dataset from that UG; connection
+> via connection string, SELECT execution, ExpandoObject row mapping, and `CommandTimeout`
+> enforcement were all verified end-to-end before this spec revision. The architecture below is
+> deliberately provider-agnostic so that PostgreSQL, MySQL, MariaDB, Microsoft SQL Server, and
+> Oracle share one implementation path.
+
+### 3.x.0 Index Configuration Format for Database Indexes (appsettings.json)
+
+Database indexes are declared alongside CSV/JSON indexes in the existing
+`DataServer:Indexes` array (spec §0.2 bootstrap format). The connection string may be
+specified **directly within the index definition** (`ConnectionString`, Flexmonster-style)
+or **by name** via the standard `ConnectionStrings` section (`ConnectionStringName`).
+
+**Resolution precedence (spec §3.x.2):** `ConnectionString` (inline) takes precedence when set;
+`ConnectionStringName` is the fallback. At least one is required (validation error otherwise).
+Connection string values are never logged or echoed in error messages.
+
+```json
+{
+  "DataServer": {
+    "Indexes": [
+      {
+        "Index": "DB",
+        "Name": "PostgreSQL salesdata",
+        "SourceType": "PostgreSQL",
+        "DatabaseType": "PostgreSQL",
+        "ConnectionString": "Host=localhost;Port=5432;Database=salesdb;Username=postgres;Password=password",
+        "Query": "SELECT * FROM salesdata ORDER BY orderid",
+        "AutoReload": true,
+        "ReloadIntervalMinutes": 20,
+        "Enabled": true
+      }
+    ]
+  }
+}
+```
+
+(`ConnectionStringName: "PivotPostgreSql"` + top-level `"ConnectionStrings": { ... }` remains
+supported as the alternative for deployments that keep credentials in user-secrets /
+environment variables instead of the index definition.)
+
+Property mapping vs. the Flexmonster-style block:
+
+| Flexmonster-style | This Data Server | Notes |
+|---|---|---|
+| `DatabaseType: "postgresql"` | `DatabaseType: "PostgreSQL"` + `SourceType: "PostgreSQL"` | enum-typed; value-insensitive JSON |
+| `ConnectionString` (inline) | `ConnectionString` (inline, precedence) or `ConnectionStringName` (reference) | inline supported per user direction (2026-10); by-name keeps credentials out of indexes.json and enables user-secrets/env overrides |
+| `Indexes.DB.Query` | `Query` | single read-only SELECT |
+| `Indexes.DB.Status: "enabled"` | `Enabled: true` | bool |
+| `Indexes.DB.RefreshTime` (minutes; 0 = no refresh) | `AutoReload` + `ReloadIntervalMinutes` | 0 / AutoReload=false = no auto-refresh; positive N = reload every N minutes from server start; manual reload always available via `POST /api/indexes/{index}/reload` |
+| `Type: "database"` | `SourceType: <DatabaseType enum>` | database source types route to DatabaseDataProvider |
+
+**Scenario 3.x.0.1: Database Index Bootstrap**
+- Given: appsettings.json declares a database index as above with a resolvable
+  `ConnectionStrings:PivotPostgreSql`
+- When: Server starts
+- Then: Index registered and loaded at bootstrap (or per `Enabled` semantics); status Ready with
+  rowCount equal to the query's row count; failure marks the index Failed with LastError and
+  applies the DataStorage retry/keep-data semantics (§2)
+
+**Scenario 3.x.0.2: Refresh Time = 0 (No Auto-Refresh)**
+- Given: Database index with `AutoReload: false` (or `ReloadIntervalMinutes: 0`)
+- When: Server runs
+- Then: No scheduled reloads; data refreshed only via `POST /api/indexes/{index}/reload` or edit
+
+> **Note:** `ORDER BY` in the query is honored (rows fetched in query order), though pivot output
+> ordering is driven by the engine's sort settings, not fetch order.
+
+### 3.x.1 Supported Providers (Provider-Agnostic Registry)
+
+**SHALL** implement one `DatabaseDataProvider` (implements the existing `IDataSourceProvider`)
+delegating connection creation to pluggable `IDatabaseQueryProvider` implementations, one per
+database system, selectable by the index's `DatabaseType`:
+
+| DatabaseType | Provider class | ADO.NET package | Verified |
+|---|---|---|---|
+| Sqlite | `SqliteQueryProvider` | `Microsoft.Data.Sqlite` | ✅ (live PoC, sandbox) |
+| PostgreSQL | `PostgresqlQueryProvider` | `Npgsql` | ✅ (live PoC vs PostgreSQL 17, sandbox) |
+| MySql | `MySqlQueryProvider` | `MySqlConnector` | optional stub (package absent → 501 provider not available) |
+| MariaDB | `MariadbQueryProvider` | `MySqlConnector` | optional stub (shares MySqlConnector) |
+| MSSQL | `SqlServerQueryProvider` | `Microsoft.Data.SqlClient` | optional stub |
+| Oracle | `OracleQueryProvider` | `Oracle.ManagedDataAccess.Core` | optional stub |
+
+Providers are registered in a registry keyed by `DatabaseType`. Optional providers are registered
+only when their NuGet package is present (feature-detect via reflection or compile-time flag);
+requesting an unavailable provider returns **501 Not Implemented** with a clear message naming the
+missing package — the server never crashes because a provider package is absent.
+
+**Scenario 3.x.1.1: PostgreSQL Index Load**
+- Given: Index with `sourceType: "PostgreSQL"`, `databaseType: "PostgreSQL"`,
+  `connectionStringName: "PivotPostgreSql"`, `query: "SELECT * FROM salesdata"`, and appsettings
+  `ConnectionStrings:PivotPostgreSql` = a valid PostgreSQL connection string
+- When: Index created (or reloaded)
+- Then: Rows returned by the query are mapped to `ExpandoObject` records — the exact same shape
+  produced by `JsonDataProvider`/`CsvDataProvider` — and flow through the identical indexing
+  pipeline (IndexManager load → cache `data:{index}` → pivot engine `engine:{index}:{hash}`)
+
+**Scenario 3.x.1.2: Provider Package Absent**
+- Given: Index with `databaseType: "Oracle"` and the Oracle package not installed
+- When: Index created or loaded
+- Then: Returns 501 `{ error: "Oracle provider requires package 'Oracle.ManagedDataAccess.Core'..." }`
+- And: Server keeps running; other indexes unaffected
+
+### 3.x.2 Connection String Resolution (Inline First, Then By Name)
+
+**SHALL** resolve connection strings in this precedence (per user direction, 2026-10):
+1. `ConnectionString` — specified directly within the index definition (Flexmonster-style, inline)
+2. `ConnectionStringName` — by name from the `ConnectionStrings` section of `appsettings.json`
+   (Syncfusion PostgreSQL UG pattern; keeps credentials out of `indexes.json` and enables
+   user-secrets/environment-variable overrides in deployment)
+
+At least one of the two is required (validation error otherwise). Connection string values are
+never logged or echoed in error messages, whichever form is used.
+
+**Scenario 3.x.2.1: Named Connection String Resolves**
+- Given: Index with `connectionStringName: "PivotPostgreSql"`
+- And: appsettings contains `"ConnectionStrings": { "PivotPostgreSql": "Host=localhost;Port=5432;Database=salesdb;Username=postgres;Password=pass" }`
+- When: Index loaded
+- Then: Connection opened with that string; `SELECT * FROM salesdata` executes against `salesdb`
+
+**Scenario 3.x.2.1a: Inline Connection String (VERIFIED live, 2026-10)**
+- Given: Index with `connectionString: "Host=localhost;Port=5433;Database=salesdb;Username=postgres;Password=postgres"`
+  and NO `connectionStringName`
+- When: Server boots (bootstrap) or the index is created via the API
+- Then: Connection opened with the inline string; query executes; rows loaded
+  (verified: 8 rows loaded from `salesdb.salesdata` at bootstrap and via POST /api/indexes 201)
+
+**Scenario 3.x.2.1b: Inline Takes Precedence Over Named**
+- Given: Index with both `connectionString` and `connectionStringName` set
+- When: Index loaded
+- Then: The inline `ConnectionString` is used; the named entry is ignored
+
+**Scenario 3.x.2.2: Unknown Connection String Name**
+- Given: Index with `connectionStringName: "DoesNotExist"` and no inline `connectionString`
+- When: Index created or loaded
+- Then: Validation error (422 on create; `Failed` status + `LastError` on load); connection strings
+  are never logged or echoed in error messages
+
+**Scenario 3.x.2.2: Unknown Connection String Name**
+- Given: Index with `connectionStringName: "DoesNotExist"`
+- When: Index created or loaded
+- Then: Validation error (422 on create; `Failed` status + `LastError` on load); connection strings
+  are never logged or echoed in error messages
+
+**PostgreSQL connection string components** (per UG): `Host`, `Port`, `Database`, `Username`,
+`Password` — e.g. `Host=localhost;Port=5432;Database=salesdb;Username=postgres;Password=pass`.
+The same name-based resolution serves MySQL (`Server/Database/Uid/Pwd`), MariaDB (same),
+SQL Server (`Server/Database/User Id/Password`), and Oracle (`User Id/Password/Data Source`) —
+only the string contents differ, so no provider-specific resolution logic is required.
+
+### 3.x.3 Query Execution Rules
+
+**SHALL** execute only a single, read-only SELECT statement per index load.
+
+- The `Query` property must contain exactly one statement (no `;` separators), must start with
+  `SELECT` (leading comments/whitespace tolerated), and must not contain DML/DDL keywords
+  (`INSERT`, `UPDATE`, `DELETE`, `MERGE`, `CREATE`, `ALTER`, `DROP`, `GRANT`, `TRUNCATE`) —
+  rejected with 422 on create/edit and on load. Read-only execution is the enforced contract:
+  server-side pivot operations (filtering, sorting, aggregation, report generation) never write
+  back to the database.
+- `CommandTimeout` is set from `DatabaseQuery.CommandTimeLimit` when `CommandTimeoutEnabled=true`
+  (0 = infinite, per §3.2); verified live with Npgsql (`SELECT pg_sleep(60)` canceled at limit).
+- Open/execute failures participate in the existing retry policy (`DataStorage.RetryAttempts`
+  with exponential backoff) and `KeepDataOnRefresh` semantics — a failed DB reload behaves
+  exactly like a failed CSV/JSON reload (status `Failed`, prior data kept when configured).
+
+**Scenario 3.x.3.1: Non-SELECT Query Rejected**
+- Given: Index with `query: "DELETE FROM salesdata"`
+- When: `POST /api/indexes`
+- Then: 422 `{ errors: ["Query must be a single read-only SELECT statement"] }`
+
+**Scenario 3.x.3.2: Query Timeout**
+- Given: `commandTimeoutEnabled: true`, `commandTimeLimit: 30`, long-running query
+- When: Index reload
+- Then: Command canceled at 30s; reload fails with retry policy; HTTP 504 when triggered via test-connection/load endpoint
+
+### 3.x.4 Result Mapping & Field Handling
+
+**SHALL** map query results to `List<ExpandoObject>` with column-name keys, identical to other
+providers, so that all downstream server-side operations (field mapping, filtering, sorting,
+aggregation, pivot engine caching, report generation) work unchanged:
+
+- Column names become property names; duplicate or blank column names → load failure (mirrors the
+  CSV header validation in §0.6/§0.7).
+- `DBNull` → `null`.
+- When `MappingEnabled` + `FieldMappings` are set on the index, database values are converted per
+  the declared mapping types (Number/String/Date) exactly as for CSV/JSON; otherwise types are
+  inferred from the ADO.NET driver-reported column types (e.g. Npgsql reports `int`, `varchar`,
+  `timestamp`), and date/datetime values are normalized to the same internal representation used
+  by the other providers.
+- Verified live (Npgsql PoC): `salesdata` rows map to `{ country, product, year, quantity }`
+  ExpandoObjects — the shape the pivot engine already consumes.
+
+**Scenario 3.x.4.1: Same Indexing Pipeline as CSV**
+- Given: Two indexes — "Sales-Csv" (CSV file) and "Sales-Db" (PostgreSQL, same data)
+- When: Both loaded and a pivot request is made against each
+- Then: Identical pivot results (aggregation, filter, sort) for both; cache keys
+  `data:Sales-Csv` / `data:Sales-Db` and `engine:*:{hash}` remain isolated per §0.9
+
+### 3.x.5 Test Connection Endpoint
+
+**SHALL** test connectivity + query execution without persisting or loading data (extends §0.8):
+- `POST /api/indexes/test-connection` with a probe payload
+  `{ databaseType, connectionStringName, query }` → opens the connection, executes the query with
+  a `LIMIT`-bounded read of the first row only, and returns
+  `{ success: true, latencyMs, columns: [...] }` or `502 { success: false, error }`.
+- Per-index variant `POST /api/indexes/{index}/test-connection` uses the index's stored settings.
+
+**Scenario 3.x.5.1: PostgreSQL Connection Success**
+- Given: Valid PostgreSQL connection string name + `SELECT * FROM salesdata`
+- When: `POST /api/indexes/test-connection`
+- Then: 200 `{ success: true, latencyMs: <ms>, columns: ["country","product","year","quantity"] }`
+
+**Scenario 3.x.5.2: PostgreSQL Connection Failure**
+- Given: Wrong host/port or bad credentials in the connection string
+- When: `POST /api/indexes/test-connection`
+- Then: 502 `{ success: false, error: "Unable to connect to PostgreSQL: <provider message>" }`
+
+### 3.x.6 Auto-Reload for Database Indexes
+
+**SHALL** honor `AutoReload` + `ReloadIntervalMinutes` for database indexes via the existing
+`IndexReloadWorker`, re-executing the query on each cycle — the same keep-data-on-refresh,
+per-index semaphore, and `KeepDataOnRefresh` eviction semantics as file-based indexes.
+
+**Scenario 3.x.6.1: Scheduled Database Reload**
+- Given: PostgreSQL index with `autoReload: true`, `reloadIntervalMinutes: 60`, database updated
+  with new rows between cycles
+- When: Reload worker fires
+- Then: Re-executes the query; new rows appear in pivot results; prior data kept if reload fails
+  and `KeepDataOnRefresh=true`
 
 ---
 

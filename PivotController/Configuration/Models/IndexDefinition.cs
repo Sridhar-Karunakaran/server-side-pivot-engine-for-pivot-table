@@ -17,6 +17,8 @@ namespace PivotController.Configuration.Models
         /// <summary>Enum: Comma (,), Dot (.) or Space ( ). Raw symbols also accepted in JSON.</summary>
         public CsvThousandsSeparator CsvThousandsSeparator { get; set; } = CsvThousandsSeparator.Comma;
         public DatabaseType? DatabaseType { get; set; }
+        /// <summary>Inline connection string (Flexmonster-style). Takes precedence over ConnectionStringName when set.</summary>
+        public string? ConnectionString { get; set; }
         public string? ConnectionStringName { get; set; }
         public string? Query { get; set; }
         public bool AutoReload { get; set; } = false;
@@ -49,6 +51,48 @@ namespace PivotController.Configuration.Models
                 if (string.IsNullOrWhiteSpace(SourcePath))
                 {
                     errors.Add("SourcePath is required for Json/Csv indexes");
+                }
+            }
+            if (SourceType != DataSourceType.Json && SourceType != DataSourceType.Csv)
+            {
+                // Database index (spec §3.x): DatabaseType, ConnectionStringName (by reference),
+                // and a single read-only SELECT query are mandatory.
+                if (DatabaseType == null)
+                {
+                    errors.Add("DatabaseType is required for database indexes");
+                }
+                if (string.IsNullOrWhiteSpace(ConnectionStringName) && string.IsNullOrWhiteSpace(ConnectionString))
+                {
+                    errors.Add("ConnectionStringName or ConnectionString is required for database indexes");
+                }
+                if (string.IsNullOrWhiteSpace(Query))
+                {
+                    errors.Add("Query is required for database indexes");
+                }
+                else
+                {
+                    var trimmed = Query.Trim();
+                    if (trimmed.Contains(';'))
+                    {
+                        errors.Add("Query must be a single read-only SELECT statement");
+                    }
+                    else if (!trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase)
+                             && !trimmed.StartsWith("WITH", StringComparison.OrdinalIgnoreCase))
+                    {
+                        errors.Add("Query must be a single read-only SELECT statement");
+                    }
+                    else
+                    {
+                        var forbidden = new[] { "INSERT", "UPDATE", "DELETE", "MERGE", "CREATE", "ALTER", "DROP", "GRANT", "TRUNCATE", "REPLACE" };
+                        foreach (var kw in forbidden)
+                        {
+                            if (System.Text.RegularExpressions.Regex.IsMatch(trimmed, $"\\b{kw}\\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                            {
+                                errors.Add("Query must be a single read-only SELECT statement (no DML/DDL)");
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             if (AutoReload && ReloadIntervalMinutes <= 0)
