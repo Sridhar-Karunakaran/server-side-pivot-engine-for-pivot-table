@@ -98,6 +98,15 @@ namespace PivotController.Configuration.Services
                     _logger.LogWarning("Persisted security.json invalid (CORS:AllowOrigin missing); appsettings Security values kept.");
                     return;
                 }
+                if (persisted.Authorization.Enabled
+                    && (persisted.CORS.AllowsAllOrigins
+                        || persisted.CORS.Origins.Any(o => !SecurityCorsSettings.IsProperOrigin(o))))
+                {
+                    // Flexmonster UG rule (spec §5.2): auth enabled requires specific proper
+                    // origin URLs in AllowOrigin — never '*'. Ignore the invalid persisted state.
+                    _logger.LogWarning("Persisted security.json enables Authorization with invalid AllowOrigin ('{Origin}'); requires specific origin URLs; appsettings Security values kept.", persisted.CORS.AllowOrigin);
+                    return;
+                }
                 if (persisted.Authorization.Enabled && !_settings.IsAuthEnabled)
                 {
                     _logger.LogWarning("Persisted security.json enables Authorization but no credentials are configured in appsettings (Security:Authorization Username/Password); appsettings enabled state kept.");

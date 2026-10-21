@@ -938,7 +938,34 @@ public class SecurityCorsSettings
 | **Authorization.Password** | — | required when Enabled | **No** |
 | **CORS.AllowOrigin** | "*" | URL, "*" or comma-separated origins | **No** (native CORS policy binds at startup) |
 
+**AllowOrigin rule (Flexmonster UG, clarified):** When basic authorization is
+enabled, Allow origin **must** specify proper origin URLs (`http://` / `https://`)
+— `*` (allow all origins) is **not permitted**, and a missing/empty AllowOrigin is
+a startup failure: the server does not start and reports that AllowOrigin must be
+specified. Several origins are separated by a comma. This rule holds in
+appsettings.json, in `{DataFolder}/security.json`, and in `PUT /api/config/security`
+(which returns 422 for violations). Trailing slashes are part of the configured
+value as-is (configure origins without a trailing slash, e.g. `http://localhost:4000`).
+
 ### 5.2 Basic Authentication Enable/Disable
+
+**Scenario 5.2.5: Auth Enabled Without Proper AllowOrigin — Startup Failure**
+- Given: `authorization.enabled: true` and `cors.allowOrigin` missing, empty, or `"*"`
+- When: Application starts
+- Then: **Server does not start** (non-zero exit)
+- And: Error message states AllowOrigin must be specified with proper origin URLs
+  (no `*`) when basic authorization is enabled
+
+**Scenario 5.2.6: Auth Enabled With Proper AllowOrigin**
+- Given: `authorization.enabled: true`, `cors.allowOrigin: "http://localhost:4000"`
+  (or comma-separated specific origins)
+- When: Application starts
+- Then: Server starts; only the specified origins receive CORS headers
+
+**Scenario 5.2.7: Auth Disabled — AllowOrigin Unrestricted**
+- Given: `authorization.enabled: false`
+- Then: `AllowOrigin` may be `*` (default), a single URL, or comma-separated URLs;
+  the auth-enabled AllowOrigin restrictions do not apply
 
 **Scenario 5.2.1: Auth Disabled (Default)**
 - Given: `authorization.enabled: false`

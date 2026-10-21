@@ -35,6 +35,20 @@ namespace PivotController.Configuration.Models
                 {
                     errors.Add("Security:Authorization:Password is required when Authorization is enabled");
                 }
+                // Flexmonster UG rule: when basic authorization is enabled, Allow origin must
+                // define specific origin URLs — never "*" (allow all) and never empty.
+                if (CORS == null || string.IsNullOrWhiteSpace(CORS.AllowOrigin))
+                {
+                    errors.Add("Security:CORS:AllowOrigin must be specified when Authorization is enabled");
+                }
+                else if (CORS.AllowsAllOrigins)
+                {
+                    errors.Add("Security:CORS:AllowOrigin must not be '*' (allow all origins) when Authorization is enabled; specify specific origins, separated by commas");
+                }
+                else if (CORS.Origins.Any(o => !SecurityCorsSettings.IsProperOrigin(o)))
+                {
+                    errors.Add("Security:CORS:AllowOrigin must be proper origin URL(s) (http:// or https://), separated by commas, when Authorization is enabled");
+                }
             }
             if (CORS == null)
             {
@@ -87,8 +101,32 @@ namespace PivotController.Configuration.Models
 
         public bool AllowsAllOrigins => AllowOrigin == "*";
 
+        /// <summary>
+        /// Configured origins, comma-separated (Flexmonster UG: "To specify several
+        /// origins, separate them with a comma"). Whitespace is trimmed per entry.
+        /// </summary>
         public string[] Origins => AllowsAllOrigins
             ? Array.Empty<string>()
             : AllowOrigin.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        /// <summary>
+        /// Validates a single origin entry (Flexmonster UG rule): when basic authorization
+        /// is enabled, Allow origin must specify proper origin URLs — never "*" (allow all).
+        /// </summary>
+        public static bool IsProperOrigin(string? origin)
+        {
+            if (string.IsNullOrWhiteSpace(origin) || origin.Trim() == "*")
+            {
+                return false;
+            }
+            if (!Uri.TryCreate(origin.Trim(), UriKind.Absolute, out var uri))
+            {
+                return false;
+            }
+            // Strict origin check: only http/https URLs with a host; Uri.TryCreate accepts
+            // things like "not a url" (implicit file path) or "C:\path" that are not origins.
+            return (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+                && !string.IsNullOrWhiteSpace(uri.Host);
+        }
     }
 }
