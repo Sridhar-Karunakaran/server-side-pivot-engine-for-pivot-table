@@ -96,12 +96,39 @@ builder.Services.AddControllers().AddJsonOptions(options =>
 });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+// Security settings (Step 5, spec §5): Authorization.Enabled + CORS.AllowOrigin.
+// Credentials (username/password) live in the Data Server configuration
+// (appsettings.json Security:Authorization) — Admin Panel later.
+// Persisted security.json (written by PUT /api/config/security) overrides the
+// Enabled/AllowOrigin appsettings values; credentials are never persisted to disk.
+var securitySettings = builder.Configuration.GetSection(SecuritySettings.SectionName).Get<SecuritySettings>() ?? new SecuritySettings();
+var securityValidation = securitySettings.Validate();
+if (securityValidation.Count > 0 && securitySettings.IsAuthEnabled)
+{
+    Console.Error.WriteLine("Invalid Security settings: " + string.Join("; ", securityValidation));
+    Environment.Exit(1);
+}
+else if (securityValidation.Count > 0)
+{
+    Console.Error.WriteLine("Invalid Security settings (ignored while Authorization disabled): " + string.Join("; ", securityValidation));
+}
+builder.Services.AddSingleton(securitySettings);
+builder.Services.AddSingleton<SecuritySettingsService>();
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy(CustomOrigins,
-    builder =>
+    options.AddPolicy(CustomOrigins, policy =>
     {
-        builder.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+        // Native ASP.NET Core CORS behavior (spec §5.3, clarified): disallowed origins
+        // receive no CORS headers and are blocked by the browser — no server-side 403.
+        if (securitySettings.CORS.AllowsAllOrigins)
+        {
+            policy.AllowAnyOrigin();
+        }
+        else
+        {
+            policy.WithOrigins(securitySettings.CORS.Origins);
+        }
+        policy.AllowAnyHeader().AllowAnyMethod();
     });
 });
 // MemoryCache without a global size cap: CacheSizeLimit is enforced per index
@@ -171,6 +198,9 @@ generalService.EnsureDataFolders();
 // Load persisted DataStorage settings (datastorage.json) so restart-required changes
 // (CacheSizeLimit / MaxCacheItemSizeBytes) actually apply after a restart.
 app.Services.GetRequiredService<DataStorageSettingsService>().LoadPersisted();
+// Load persisted Security settings (security.json: authorization.enabled, cors.allowOrigin)
+// so runtime changes made via PUT /api/config/security survive restarts (spec §5.4).
+app.Services.GetRequiredService<SecuritySettingsService>().LoadPersisted(generalService.DataFolderPath);
 
 // Bootstrap: register indexes from appsettings.json and DataServer/indexes.json, preload enabled ones.
 var indexManager = app.Services.GetRequiredService<IIndexManager>();
@@ -191,9 +221,14 @@ if (httpsSettings.Enabled)
 }
 
 app.UseAuthorization();
+// CORS policy must be applied BEFORE Basic Auth so preflight OPTIONS requests
+// (sent by browsers without credentials) are answered with CORS headers.
+app.UseCors(CustomOrigins);
+// Basic Authentication (spec §5.2): when Security:Authorization:Enabled, every /api/*
+// request (except CORS preflights) requires valid Data Server credentials.
+app.UseMiddleware<PivotController.Security.PivotBasicAuthMiddleware>();
 
 app.MapControllers();
-app.UseCors(CustomOrigins);
 // Static demo page (tunnel sample) — served from wwwroot/data-server.html.
 app.UseStaticFiles();
 app.Run();
