@@ -13,8 +13,6 @@ namespace PivotController.Configuration.Controllers
     {
         private readonly IIndexManager _indexManager;
         private readonly IDataSourceProviderFactory _providerFactory;
-        private readonly Microsoft.Extensions.Options.IOptions<DatabaseQuerySettings> _querySettings;
-        private readonly IConfiguration _configuration;
 
         private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
 
@@ -28,12 +26,10 @@ namespace PivotController.Configuration.Controllers
             return options;
         }
 
-        public IndexController(IIndexManager indexManager, IDataSourceProviderFactory providerFactory, Microsoft.Extensions.Options.IOptions<DatabaseQuerySettings> querySettings, IConfiguration configuration)
+        public IndexController(IIndexManager indexManager, IDataSourceProviderFactory providerFactory)
         {
             _indexManager = indexManager;
             _providerFactory = providerFactory;
-            _querySettings = querySettings;
-            _configuration = configuration;
         }
 
         [HttpGet]
