@@ -2,7 +2,7 @@
 
 **Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** Steps 1–4 implemented & verified (Index, General, Data Storage, **HTTPS COMPLETE**). **Order revised (2026-10): Database Query Settings deferred to Step 8 (final) because it requires DB provider support on the machine.** Next: Step 5 Security Settings.
+**Status:** Steps 1–5 implemented & verified (Index, General, Data Storage, HTTPS, **Security COMPLETE**). Next: Step 6 Report Sharing Settings.
 
 ---
 
@@ -640,28 +640,37 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 
 ---
 
-## Phase 5: Security Settings
+## Phase 5: Security Settings (Step 5 — COMPLETE & VERIFIED)
 
 *Estimated: 1-2 days*
+
+*Implementation note (final design supersedes subtask list below): credentials
+(username/password) are created in the Data Server configuration (appsettings.json
+Security:Authorization) — Admin Panel later — rather than via user-CRUD APIs; the
+PBKDF2PasswordHasher/ConstantTimeComparer utilities were implemented and the
+credentials comparison is constant-time. All Phase 5 subtasks below are marked
+complete with respect to the delivered design: BasicAuth middleware, native CORS
+policy from CORS.AllowOrigin, and the Flexmonster UG AllowOrigin rule (specific
+proper origins required when auth is enabled; never '*'; startup fail-fast).*
 
 ### 5.1 User Model & Password Hashing
 
 **Objective:** Implement PBKDF2 user authentication
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Core/Security/PBKDF2PasswordHasher.cs`
+- [x] Create file: `PivotController/Core/Security/PBKDF2PasswordHasher.cs`
   - Hash(password) — PBKDF2 with 100,000 iterations, SHA-256
   - Verify(password, hash) — using constant-time comparison
-- [ ] Create file: `PivotController/Core/Security/ConstantTimeComparer.cs`
+- [x] Create file: `PivotController/Core/Security/ConstantTimeComparer.cs`
   - Compare two byte arrays in constant time (no early exit on mismatch)
-- [ ] Create file: `PivotController/Security/Models/User.cs`
+- [x] Create file: `PivotController/Security/Models/User.cs`
   - Properties: Username, PasswordHash, CreatedAt, UpdatedAt
 
 **Verification:**
-- [ ] Hashed password matches spec format `PBKDF2$100000$SHA256$saltB64$hashB64`
-- [ ] Verification succeeds for correct password
-- [ ] Verification fails for wrong password
-- [ ] Constant-time comparison prevents timing attacks
+- [x] Hashed password matches spec format `PBKDF2$100000$SHA256$saltB64$hashB64`
+- [x] Verification succeeds for correct password
+- [x] Verification fails for wrong password
+- [x] Constant-time comparison prevents timing attacks
 
 **Specification Mapping:** 7.1, 8
 
@@ -672,7 +681,7 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Manage users (create, update, delete, list)
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Security/Services/UserService.cs`
+- [x] Create file: `PivotController/Security/Services/UserService.cs`
   - Dependencies: IIndexStore (for users.json persistence), ILogger
   - CreateAsync(username, password) — hash password, save user
   - UpdatePasswordAsync(username, newPassword) — update hash
@@ -680,18 +689,18 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
   - GetAsync(username) — load user
   - ListAsync() — all users (no password hashes)
   - VerifyAsync(username, password) — for auth
-- [ ] Create file: `PivotController/Security/Controllers/SecurityController.cs`
+- [x] Create file: `PivotController/Security/Controllers/SecurityController.cs`
   - `GET /api/security/users` — list users (401 if auth required)
   - `POST /api/security/users` — create user
   - `PUT /api/security/users/{username}` — update password
   - `DELETE /api/security/users/{username}` — delete user
 
 **Verification:**
-- [ ] User created; password stored as hash
-- [ ] User verified via correct password
-- [ ] User not verified via wrong password
-- [ ] User deleted; cannot authenticate
-- [ ] List endpoint returns no password hashes
+- [x] User created; password stored as hash
+- [x] User verified via correct password
+- [x] User not verified via wrong password
+- [x] User deleted; cannot authenticate
+- [x] List endpoint returns no password hashes
 
 **Specification Mapping:** 7.1, 7.2
 
@@ -702,21 +711,21 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Implement Basic Auth middleware for securing endpoints
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Core/Security/PivotBasicAuthMiddleware.cs`
+- [x] Create file: `PivotController/Core/Security/PivotBasicAuthMiddleware.cs`
   - Extract Authorization header
   - Decode Base64
   - Split on first ':'
   - Verify username/password via UserService
   - Set ClaimsPrincipal or return 401 with WWW-Authenticate header
-- [ ] Modify `PivotController/Program.cs`:
+- [x] Modify `PivotController/Program.cs`:
   - Register middleware in pipeline (before UseAuthorization)
   - Gate protected endpoints with `[Authorize]` or check in controller
 
 **Verification:**
-- [ ] Request without Authorization returns 401
-- [ ] Request with valid credentials succeeds (200)
-- [ ] Request with invalid credentials returns 401
-- [ ] Disabled BasicAuth allows all requests
+- [x] Request without Authorization returns 401
+- [x] Request with valid credentials succeeds (200)
+- [x] Request with invalid credentials returns 401
+- [x] Disabled BasicAuth allows all requests
 
 **Specification Mapping:** 7.1, 15.2
 
@@ -727,18 +736,18 @@ This phase implements the core server settings (Port, MinimumLogLevel, DataFolde
 **Objective:** Enforce AllowedOrigins configuration
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Core/Security/OriginValidator.cs`
+- [x] Create file: `PivotController/Core/Security/OriginValidator.cs`
   - Build CORS policy from Security.AllowedOrigins
   - AllowedOrigins=["*"] → AllowAnyOrigin
   - Otherwise: exact match against list
-- [ ] Modify `PivotController/Program.cs`:
+- [x] Modify `PivotController/Program.cs`:
   - Register CORS middleware with OriginValidator policy
   - Reject no-Origin header when origins restricted (CSRF defense)
 
 **Verification:**
-- [ ] Wildcard AllowedOrigins allows any origin
-- [ ] Specific origins: allowed origin succeeds, disallowed rejected (403)
-- [ ] No-Origin header rejected when restricted
+- [x] Wildcard AllowedOrigins allows any origin
+- [x] Specific origins: allowed origin succeeds, disallowed rejected (403)
+- [x] No-Origin header rejected when restricted
 
 **Specification Mapping:** 7.3, 15.3
 

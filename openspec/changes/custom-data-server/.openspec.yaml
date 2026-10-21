@@ -16,4 +16,4 @@ artifacts:
     data-server-backend: specs/data-server-backend/spec.md
 
 created_at: 2024-12-19
-2026-10-22  # Steps 1-4 complete (HTTPS done incl. store source, SubjectName, cross-platform fallback, test PKI); AllowInvalidCertificates + AllowHttpTunnelPort removed; next: Step 5 Security
+2026-10-22  # Steps 1-5 complete (Security done: Authorization.Enabled + Data Server credentials, CORS.AllowOrigin with Flexmonster UG rule - specific origins required when auth enabled, never '*', startup fail-fast, API 422, native CORS behavior); next: Step 6 Report Sharing
