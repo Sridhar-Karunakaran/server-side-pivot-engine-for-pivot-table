@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>Pivot Table — PostgreSQL Index via Syncfusion Data Server (Server Mode)</title>
+    <!-- Latest EJ2 packages -->
+    <link rel="stylesheet" href="https://cdn.syncfusion.com/ej2/30.1.37/fluent2.css" />
+    <script src="https://cdn.syncfusion.com/ej2/30.1.37/dist/ej2.min.js" type="text/javascript"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 24px; background: #fafafa; }
+        h1 { font-size: 22px; font-weight: 600; }
+        p.note { color: #555; max-width: 860px; }
+        .pivot-section { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;
+                          padding: 14px; margin: 14px 0; }
+        .pivot-section h2 { font-size: 15px; margin: 0 0 10px 0; color: #333; }
+        .pivot-section .meta { font-size: 12px; color: #777; margin-bottom: 8px; }
+        .container { height: 420px; }
+        #status { font-size: 13px; color: #060; margin: 6px 0 0 0; }
+        #status.error { color: #c00; }
+    </style>
+</head>
+<body>
+    <h1>Pivot Table — PostgreSQL Data Server Index (Server Mode)</h1>
+    <p class="note">
+        This grid runs in <b>Server mode</b>: the Data Server fetches rows from the
+        <code>Sales-Db</code> PostgreSQL index (connection string + SQL query configured on the
+        server), and all pivot calculations, aggregation, filtering, sorting and report generation
+        execute server-side via <code>/api/pivot/post</code> — only the computed viewport is sent
+        to the browser. The client-side report settings below match the index data source fields
+        (<code>country</code>, <code>product</code>, <code>year</code>, <code>quantity</code>).
+    </p>
+
+    <div class="pivot-section">
+        <h2>Sales Data — PostgreSQL index <code>Sales-Db</code></h2>
+        <div class="meta">
+            index: <code>Sales-Db</code> · source: PostgreSQL <code>salesdb.salesdata</code>
+            · query: <code>SELECT * FROM salesdata</code>
+        </div>
+        <div class="meta">
+            Data Server Basic Auth: <input id="authUser" placeholder="username" value="admin" size="8" />
+            <input id="authPass" placeholder="password" type="password" size="12" />
+            <button id="authBtn">Reload with credentials</button>
+        </div>
+        <div class="container"><div id="PivotDb" style="width: 100%;"></div></div>
+        <p id="status"></p>
+    </div>
+
+    <script type="text/javascript">
+        // Index-aware routing: copy the ?index= query param into the JSON request body so the
+        // Data Server routes this pivot to the Sales-Db index (same mechanism as the Data Server
+        // sample pages). Per-request state on the XHR/fetch call: no timing races.
+        (function () {
+            function patchUrlIndex(url) {
+                var m = /[?&]index=([^&]+)/.exec(String(url));
+                return m ? decodeURIComponent(m[1]) : null;
+            }
+            function injectIndex(body, index) {
+                if (!index || typeof body !== 'string' || body.indexOf('dataSourceSettings') === -1) {
+                    return body;
+                }
+                try {
+                    var parsed = JSON.parse(body);
+                    if (parsed && parsed.dataSourceSettings) {
+                        parsed.index = index;
+                        return JSON.stringify(parsed);
+                    }
+                } catch (e) { /* not JSON; leave as-is */ }
+                return body;
+            }
+
+            var realOpen = XMLHttpRequest.prototype.open;
+            var realSend = XMLHttpRequest.prototype.send;
+            XMLHttpRequest.prototype.open = function (method, url) {
+                this._pivotIndex = String(url).indexOf('/api/pivot/post') > -1 ? patchUrlIndex(url) : null;
+                return realOpen.apply(this, arguments);
+            };
+            XMLHttpRequest.prototype.send = function (body) {
+                if (this._pivotIndex && body) {
+                    arguments[0] = injectIndex(body, this._pivotIndex);
+                }
+                // Basic Auth for the Data Server API (only when credentials are provided
+                // in the sample UI; the browser cannot prompt for XHR Basic Auth on its own).
+                var auth = window.__pivotAuth;
+                if (this._pivotIndex && auth) {
+                    this.setRequestHeader('Authorization', 'Basic ' + btoa(auth.user + ':' + auth.pass));
+                }
+                return realSend.apply(this, arguments);
+            };
+
+            var realFetch = window.fetch;
+            if (realFetch) {
+                window.fetch = function (input, init) {
+                    var url = typeof input === 'string' ? input : (input && input.url) || '';
+                    if (String(url).indexOf('/api/pivot/post') > -1 && init && init.body) {
+                        var index = patchUrlIndex(url);
+                        if (index && typeof init.body === 'string') {
+                            init = Object.assign({}, init, { body: injectIndex(init.body, index) });
+                        }
+                    }
+                    return realFetch.apply(this, arguments);
+                };
+            }
+        })();
+
+        var statusEl = document.getElementById('status');
+        var pivotObj = null;
+
+        function renderPivot() {
+            if (pivotObj) { pivotObj.destroy(); pivotObj = null; }
+            try {
+                pivotObj = new ej.pivotview.PivotView({
+                    dataSourceSettings: {
+                        // Server mode: data never loads client-side; the Data Server engine handles
+                        // everything against the Sales-Db index (PostgreSQL rows cached server-side).
+                        url: window.location.origin + '/api/pivot/post?index=Sales-Db',
+                        mode: 'Server',
+                        // Report settings aligned with the Sales-Db index data source fields:
+                        // country, product, year, quantity (as returned by SELECT * FROM salesdata).
+                        type: 'JSON',
+                        rows: [{ name: 'country', caption: 'Country' }],
+                        columns: [{ name: 'product', caption: 'Product' }],
+                        values: [{ name: 'quantity', caption: 'Units Sold', type: 'Sum' }],
+                        filters: [{ name: 'year', caption: 'Year' }],
+                        expandAll: false,
+                        enableSorting: true,
+                        allowMemberFilter: true,
+                        formatSettings: [{ name: 'quantity', format: 'N0' }]
+                    },
+                    enableVirtualization: true,
+                    enableValueSorting: true,
+                    showGroupingBar: true,
+                    showFieldList: true,
+                    allowCalculatedField: true,
+                    height: 400,
+                    width: '100%',
+                    dataBound: function () {
+                        statusEl.textContent = 'Pivot rendered from Data Server index data. Open the field list / grouping bar to slice the PostgreSQL data server-side.';
+                        statusEl.classList.remove('error');
+                    },
+                    loadFailure: function () {
+                        statusEl.textContent = 'Pivot request failed — check the Data Server console (index status, auth, or DB connectivity).';
+                        statusEl.classList.add('error');
+                    }
+                });
+                pivotObj.appendTo('#PivotDb');
+            } catch (e) {
+                statusEl.textContent = 'Init error: ' + e.message;
+                statusEl.classList.add('error');
+            }
+        }
+
+        document.getElementById('authBtn').addEventListener('click', function () {
+            var user = document.getElementById('authUser').value;
+            var pass = document.getElementById('authPass').value;
+            window.__pivotAuth = user ? { user: user, pass: pass } : null;
+            renderPivot();
+        });
+
+        // First render without auth; if the Data Server has Basic Auth enabled, enter
+        // credentials above and click "Reload with credentials".
+        renderPivot();
+    </script>
+</body>
+</html>

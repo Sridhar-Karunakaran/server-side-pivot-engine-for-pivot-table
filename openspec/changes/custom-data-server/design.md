@@ -690,6 +690,10 @@ DataServer.Pivot
 - `Services/ConfigurationPersistenceService.cs` (load/save atomic)
 - `Services/ConfigurationFileWatcher.cs` (hot-reload, file watching)
 - `Controllers/ConfigController.cs` (GET /api/config, PUT /api/config)
+- `Controllers/DatabaseQueryConfigController.cs` (GET/PUT /api/config/databasequery — Step 7: Command timeout / Command time limit)
+- `Services/DatabaseQuerySettingsService.cs` (merge-patch, databasequery.json persistence, LoadPersisted)
+- `Models/DatabaseQuerySettings.cs` (CommandTimeoutEnabled, CommandTimeLimit + validation)
+- `Models/TestConnectionRequest.cs` (POST /api/indexes/test-connection probe payload, §3.x.5)
 
 **Core/**
 - `Persistence/AtomicJsonStore.cs` (atomic writes)

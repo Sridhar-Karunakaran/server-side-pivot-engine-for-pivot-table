@@ -16,4 +16,4 @@ artifacts:
     data-server-backend: specs/data-server-backend/spec.md
 
 created_at: 2024-12-19
-2026-10-22  # Steps 1-5 complete (Security done: Authorization.Enabled + Data Server credentials, CORS.AllowOrigin with Flexmonster UG rule - specific origins required when auth enabled, never '*', startup fail-fast, API 422, native CORS behavior); next: Step 6 Report Sharing
+2026-10-22  # Steps 1-6 complete (Index, General, Data Storage, HTTPS, Security, Report Sharing) + §3.x DB data source integration (PostgreSQL via Npgsql + SQLite; inline ConnectionString or ConnectionStringName; test-connection API) + Step 7 Database Query Settings COMPLETE (Command timeout / Command time limit: GET/PUT /api/config/databasequery, runtime apply, timeout enforcement + retry + 502, validation 422, databasequery.json persistence) — all verified live (sandbox PostgreSQL 17 + user local environment). Remaining: Client-Side Integration (final step).

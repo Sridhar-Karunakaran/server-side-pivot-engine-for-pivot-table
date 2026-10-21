@@ -18,11 +18,19 @@
 | 4 | §4 HTTPS Settings | ✅ Implemented & verified (COMPLETE) | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; HTTP/1 & HTTP/2 negotiation; merge-patch API; https.json precedence hardened; test PKI shipped (Cert/PEM-Cert/); verify-https.sh 33 checks; see deltas below |
 | 5 | §5 Security Settings | ✅ Implemented & verified (COMPLETE) | Basic Auth (Authorization.Enabled + Data Server credentials) + CORS (AllowOrigin; specific origins required when auth enabled, never '*', fail-fast at startup, 422 via API); see deltas below |
 | 6 | §6 Report Sharing | ✅ Implemented & verified (COMPLETE) | Report storage/expiration/quota/auto-delete; `ReportSharingOptions` appsettings + `reportsharing.json` persistence; auto-store on client pivot requests; see deltas below |
-| 7 | §3 Database Query Settings | ⬜ Not started (Step 7 = Command timeout / Command time limit ONLY; DB fetching/indexing is §3.x, already verified) | DB data can be indexed before Step 7; Step 7 tunes query timeouts only |
+| 7 | §3 Database Query Settings | ✅ Implemented & verified (COMPLETE) | Command timeout / Command time limit ONLY: GET/PUT /api/config/databasequery (merge-patch, runtime apply, requiresRestart=false); timeout enforced on live queries (pg_sleep canceled at 2s/3s limits, TimeoutException + retry policy + Failed status + 502); commandTimeLimit<0 → 422; 0 = unlimited; disabled → SQL driver default; databasequery.json persistence verified across restart; verified on user's local environment too |
 | — | §3.x Database Data Source Integration | ✅ Implemented & verified live | PostgreSQL 17 via Npgsql + SQLite; connection-string-by-name, single-SELECT rule, ExpandoObject mapping into shared pipeline; MySQL/MariaDB/MSSQL/Oracle optional (501 until packages added) |
 | 8 | §7 Client-Side Integration | ⬜ Not started | Sample sends index via `?index=` query |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
+
+**Step 7 — Database Query Settings (COMPLETE — supersedes earlier wording; per user scope direction 2026-10)**
+- Scope is ONLY the two timeout options (`Command timeout` / `Command time limit`), applied while executing queries for database indexes. DB data fetching/indexing itself is §3.x (implemented & verified live, independently).
+- `DatabaseQuerySettings` (appsettings `DatabaseQuery` section) carries `CommandTimeoutEnabled` (default `false` — Data Server defers to the SQL driver's own timeout) and `CommandTimeLimit` (seconds; `0` = unlimited; default `150`). Validation: negative limit → `422`.
+- API: `GET /api/config/databasequery` and `PUT /api/config/databasequery` (merge-patch; only supplied properties change). Both options are **runtime-applied** (`requiresRestart: false`) — the query executor reads the live settings instance on every load, so a PUT takes effect on the next query without restart (spec §3.2.4).
+- Persistence: `PUT` writes `{DataFolder}/databasequery.json` (atomic); at startup `LoadPersisted` restores it — persisted values override appsettings.json. Startup log states which source won (`DatabaseQuery settings loaded from ...` vs `No persisted databasequery.json; appsettings.json values in effect`).
+- Timeout enforcement (verified live, sandbox + user's local environment): a query exceeding the limit is canceled by the driver (e.g. Npgsql `Timeout during reading attempt`), wrapped as `TimeoutException: "Query for index '{index}' exceeded the command timeout ({N}s)."` with the inner driver exception preserved; the retry policy participates (default 3 attempts, exponential backoff, per-attempt console logging); final state: index `Failed` + `lastError`, and `502` when the load is triggered via the API/reload endpoint. `commandTimeLimit: 0` lets a long query run to completion (verified with a ~80s query). With the timeout disabled, the SQL driver default applies (Npgsql: 30s).
+- Bootstrap note: a timeout failure during startup preload logs the full exception in the console (no HTTP status, no API call in flight); the same failure via `POST /api/indexes/{index}/reload` returns `502` after retries are exhausted.
 
 
 **Step 6 — Report Sharing Settings (COMPLETE — supersedes earlier §6 wording)**
@@ -716,7 +724,7 @@ public class DataStorageSettings
 
 ---
 
-## 3. Database Query Settings Configuration (STEP 4)
+## 3. Database Query Settings Configuration (STEP 7 — IMPLEMENTED & VERIFIED)
 
 ### 3.1 Configuration Model
 
