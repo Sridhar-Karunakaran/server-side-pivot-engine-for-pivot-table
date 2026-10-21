@@ -17,11 +17,25 @@
 | 3 | §2 Data Storage Settings | ✅ Implemented & verified | CacheSizeLimit aligned with Flexmonster semantics; see deltas below |
 | 4 | §4 HTTPS Settings | ✅ Implemented & verified (COMPLETE) | All three certificate sources (PFX / PEM fullchain / store thumbprint+subjectName with location fallback) verified live end-to-end; TLS 1.2+ enforced; HTTP/1 & HTTP/2 negotiation; merge-patch API; https.json precedence hardened; test PKI shipped (Cert/PEM-Cert/); verify-https.sh 33 checks; see deltas below |
 | 5 | §5 Security Settings | ✅ Implemented & verified (COMPLETE) | Basic Auth (Authorization.Enabled + Data Server credentials) + CORS (AllowOrigin; specific origins required when auth enabled, never '*', fail-fast at startup, 422 via API); see deltas below |
-| 6 | §6 Report Sharing | 🔄 In progress | Report storage/expiration/quota — `ReportSharingOptions` appsettings + `reportsharing.json` persistence |
+| 6 | §6 Report Sharing | ✅ Implemented & verified (COMPLETE) | Report storage/expiration/quota/auto-delete; `ReportSharingOptions` appsettings + `reportsharing.json` persistence; auto-store on client pivot requests; see deltas below |
 | 7 | §3 Database Query | ⬜ Not started | SQLite-only provider (mandatory); future providers incremental |
 | 8 | §7 Client-Side Integration | ⬜ Not started | Sample sends index via `?index=` query |
 
 ### Implementation deltas (verified behavior, deviates from original spec text)
+
+
+**Step 6 — Report Sharing Settings (COMPLETE — supersedes earlier §6 wording)**
+- Schema is the appsettings `ReportSharingOptions` section: `{ EndpointEnabled, PathToFolder, ReportExpirationTime, MaxSizeOfFolder, AutoDeletingEnabled }`. Persisted changes (PUT /api/config/reportsharing) go to `{DataFolder}/reportsharing.json` with the same precedence model as Steps 2–5 (non-null persisted fields override appsettings; logged loudly at startup).
+- `PathToFolder`: relative paths resolve against `{DataFolder}`; absolute paths allowed; path traversal (`../../`) → 422 (API) and startup fail-fast. Changing it requires restart (surfaced via `requiresRestartFields`).
+- **Auto-store**: the client-side pivot table never calls the report API directly; `POST /api/pivot/post` auto-saves the request's report configuration through `ReportSharingService` when `EndpointEnabled` (spec §6.3.1 note). Auto-save failures are logged and never break the pivot response.
+- **Report file format**: ONE `{reportId}.json` per report containing metadata (reportId, name, owner, createdAt, expiresAt, sizeBytes) + the report. No `.meta.json` sidecar (legacy sidecars ignored/swept).
+- **Stored report structure is CLIENT-side** (user direction): camelCase properties (`AllowLabelFilter` → `allowLabelFilter`), string enums (`GrandTotalsPosition: 0` → `"Top"`, `SubTotalsPosition` → `"Top" | "Bottom"`, summary `Type` → `"Sum"` …), nulls omitted, and **`internalProperties` excluded**. All client-configured properties are preserved (rows/columns/values/filters with captions, drilledMembers, formatSettings, fieldMapping, groupSettings, sortSettings, conditionalFormatSettings, calculatedFieldSettings). Built by `ClientReportBuilder`.
+- POST always creates a NEW report with a new GUID (no overwrite/update semantics). Payload is an opaque JSON blob — only JSON validity is checked, not the Pivot Report structure.
+- **Expiration** (`ReportExpirationTime` minutes, 0 = never) is an INDEPENDENT cleanup mechanism: expired reports are ALWAYS removed by the sweep (and read as 410 Gone), regardless of `AutoDeletingEnabled`.
+- **AutoDeletingEnabled governs ONLY quota eviction**: with `MaxSizeOfFolder` MB (0 = unlimited) reached, saving evicts oldest reports (CreatedAt-first) until the new report fits; with `AutoDeletingEnabled=false` the save returns **507 Insufficient Storage** and the folder is untouched.
+- **Sweep worker**: every **15 seconds** (plus an immediate startup pass) — NOT the earlier 5-minute cadence — so a 1-minute `ReportExpirationTime` is honored promptly (verified live: expired report physically deleted within one cycle of expiry).
+- Endpoints: `POST/GET/DELETE /api/reportsharing/reports[/{reportId}]` + `GET/PUT /api/config/reportsharing`; disabled endpoint → **404** on all report operations (config API stays available); expired read → **410**; validation failures → **422** (traversal, negative quota, scalar payload).
+- All scenarios verified live end-to-end (404/200/201/204/410/422/507, evict-oldest, expiration within 15 s, persistence across restart).
 
 **Step 5 — Security Settings (COMPLETE — supersedes earlier §5 wording)**
 - Schema is the clarified appsettings structure: `Security: { Authorization: { Enabled, Username, Password }, CORS: { AllowOrigin } }`. Credentials are created in the Data Server configuration (appsettings.json) for now — Admin Panel later (Phase 2); they are never settable via the API, never persisted to `{DataFolder}/security.json`, and never returned by `GET /api/config/security`.

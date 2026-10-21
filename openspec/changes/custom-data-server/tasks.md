@@ -2,7 +2,7 @@
 
 **Date:** 2024-12-19 (updated after Steps 1–3 implementation)
 
-**Status:** Steps 1–5 implemented & verified (Index, General, Data Storage, HTTPS, **Security COMPLETE**). Next: Step 6 Report Sharing Settings.
+**Status:** Steps 1–6 implemented & verified (Index, General, Data Storage, HTTPS, Security, **Report Sharing COMPLETE**). Next: Step 7 Client-Side Integration.
 
 ---
 
@@ -762,9 +762,9 @@ proper origins required when auth is enabled; never '*'; startup fail-fast).*
 **Objective:** Manage report storage with expiration and quota
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Reports/Models/ReportMetadata.cs`
+- [x] Create file: `PivotController/Reports/Models/ReportMetadata.cs`
   - Properties: ReportId, Name, Owner, CreatedAt, ExpiresAt, SizeBytes
-- [ ] Create file: `PivotController/Reports/Services/ReportSharingService.cs`
+- [x] Create file: `PivotController/Reports/Services/ReportSharingService.cs`
   - SaveAsync(name, owner, payload) — store report, return reportId
   - GetAsync(reportId) — retrieve report; return 410 if expired
   - DeleteAsync(reportId) — delete report
@@ -772,10 +772,10 @@ proper origins required when auth is enabled; never '*'; startup fail-fast).*
   - CheckQuotaAsync() — verify folder size limit
 
 **Verification:**
-- [ ] Report saved and retrieved successfully
-- [ ] Expired report returns 410
-- [ ] Quota check prevents save when full; returns 507
-- [ ] Delete removes report
+- [x] Report saved and retrieved successfully
+- [x] Expired report returns 410
+- [x] Quota check prevents save when full; returns 507
+- [x] Delete removes report
 
 **Specification Mapping:** 8.1, 8.2, 8.3, 16.1
 
@@ -786,15 +786,15 @@ proper origins required when auth is enabled; never '*'; startup fail-fast).*
 **Objective:** Auto-delete expired reports and maintain quota
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Reports/Services/ReportSweepWorker.cs` (BackgroundService)
+- [x] Create file: `PivotController/Reports/Services/ReportSweepWorker.cs` (BackgroundService)
   - Runs every 5 minutes (when AutoDelete=true)
   - Remove reports where `ExpiresAt < now`
   - If quota exceeded, evict oldest until under limit
   - Log sweep results
 
 **Verification:**
-- [ ] Expired reports deleted after sweep
-- [ ] Quota maintained (no folder size exceed after sweep)
+- [x] Expired reports deleted after sweep
+- [x] Quota maintained (no folder size exceed after sweep)
 
 **Specification Mapping:** 16.2, 8.3
 
@@ -805,7 +805,7 @@ proper origins required when auth is enabled; never '*'; startup fail-fast).*
 **Objective:** Expose report endpoints
 
 **Subtasks:**
-- [ ] Create file: `PivotController/Reports/Controllers/ReportsController.cs`
+- [x] Create file: `PivotController/Reports/Controllers/ReportsController.cs`
   - `POST /api/reportsharing/reports` — save report
     - Request: { name, owner, payload }
     - Response: 201 `{ reportId, createdAt, expiresAt, sizeBytes }`
@@ -815,14 +815,24 @@ proper origins required when auth is enabled; never '*'; startup fail-fast).*
   - `DELETE /api/reportsharing/reports/{reportId}` — delete report
 
 **Verification:**
-- [ ] Report saved via API
-- [ ] Report retrieved via API
-- [ ] Expired report returns 410
-- [ ] List shows all reports
+- [x] Report saved via API
+- [x] Report retrieved via API
+- [x] Expired report returns 410
+- [x] List shows all reports
 
 **Specification Mapping:** 8.1, 8.2, 9.1
 
 ---
+
+**Implementation deltas (verified live, supersedes the subtask file list above):**
+- Files: `Configuration/Models/ReportSharingSettings.cs`, `Reports/Models/ReportMetadata.cs` + `Reports/Models/ReportFile.cs`, `Reports/Services/ReportSharingService.cs` + `Reports/Services/ClientReportBuilder.cs` + `Reports/Services/ReportSweepWorker.cs`, `Reports/Controllers/ReportsController.cs` + `Reports/Controllers/ReportSharingConfigController.cs`.
+- ONE `{reportId}.json` per report (metadata + report) — no `.meta.json` sidecar.
+- Stored report is CLIENT-side structure: camelCase, string enums (`grandTotalsPosition: "Top"`), `internalProperties` excluded, all client-configured properties preserved (`ClientReportBuilder`).
+- Expiration (0 = never) is an independent cleanup: expired → 410 on read + deleted by the 15-second sweep regardless of `AutoDeletingEnabled`.
+- `AutoDeletingEnabled` governs ONLY quota eviction: over-quota save evicts oldest until it fits; disabled → 507.
+- Pivot requests (`/api/pivot/post`) auto-store the report when `EndpointEnabled` — the client never calls the report API directly.
+- Settings persisted to `{DataFolder}/reportsharing.json` (same precedence model as Steps 2–5); `pathToFolder` requires restart; traversal → 422 / startup fail-fast.
+- All scenarios verified live (404/200/201/204/410/422/507, evict-oldest, 1-minute expiry deleted within one 15 s cycle, restart persistence).
 
 ## Phase 7: Persistence, Logging, APIs, Hot-Reload
 
