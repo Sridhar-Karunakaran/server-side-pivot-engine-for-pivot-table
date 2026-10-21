@@ -1,6 +1,9 @@
 namespace PivotController.Reports.Models
 {
-    /// <summary>Sidecar metadata for a stored report (spec §6.3): {reportId}.meta.json.</summary>
+    /// <summary>
+    /// Report metadata returned by the List API (spec §6.3.3) and persisted inside
+    /// the single report JSON file alongside the client-side report payload.
+    /// </summary>
     public class ReportMetadata
     {
         public string ReportId { get; set; } = string.Empty;
