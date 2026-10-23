@@ -1,0 +1,371 @@
+{
+  "manifestVersion": 1,
+  "note": "Declares every template, where it is written, its substitution variables, and how upgrade mode treats it. The generator validates output against this: any file still containing an unreplaced {{VAR}}, a TODO, or a placeholder is rejected before it reaches the user.",
+  "rejectIfOutputContains": [
+    "{{",
+    "}}",
+    "TODO:",
+    "<describe",
+    "FIXME",
+    "lorem ipsum",
+    "PLACEHOLDER"
+  ],
+  "templates": [
+    {
+      "template": "agent/tools/task.py.tmpl",
+      "output": ".agent/tools/task.py",
+      "vars": [],
+      "upgrade": "overwrite",
+      "executable": true,
+      "note": "Harness code. No substitutions - reads all config from harness.yaml."
+    },
+    {
+      "template": "agent/tools/harness.py.tmpl",
+      "output": ".agent/tools/harness.py",
+      "vars": [],
+      "upgrade": "overwrite",
+      "executable": true
+    },
+    {
+      "template": "agent/tools/parsers.py.tmpl",
+      "output": ".agent/tools/parsers.py",
+      "vars": [],
+      "upgrade": "overwrite"
+    },
+    {
+      "template": "agent/tools/hyaml.py.tmpl",
+      "output": ".agent/tools/hyaml.py",
+      "vars": [],
+      "upgrade": "overwrite"
+    },
+    {
+      "template": "agent/instructions.md.tmpl",
+      "output": ".agent/instructions.md",
+      "vars": [
+        "PROJECT_NAME",
+        "TIER",
+        "PROFILE",
+        "HARNESS_VERSION",
+        "OVERLAY_LINE",
+        "ADAPTER",
+        "TIER_L0_NOTE",
+        "INNER_GATE_LIST",
+        "INNER_BUDGET",
+        "RETRY_LIMIT",
+        "OUTER_GATE_INSTRUCTIONS",
+        "CATALOG",
+        "RISK_PATHS"
+      ],
+      "upgrade": "overwrite",
+      "note": "Regenerated so protocol fixes reach every project. Project-specific content lives in project-context.md, which is merged instead."
+    },
+    {
+      "template": "agent/project-context.md.tmpl",
+      "output": ".agent/project-context.md",
+      "vars": [
+        "PROJECT_NAME",
+        "STACK",
+        "PROFILE",
+        "OVERLAY_LINE",
+        "TIER",
+        "TIER_MEANING",
+        "ARCH_TOOL",
+        "ARCHITECTURE_MAP",
+        "PLACEMENT_RULES",
+        "HOTSPOTS",
+        "ENFORCED_CONVENTIONS",
+        "PROSE_CONVENTIONS",
+        "BOUNDARIES",
+        "RISK_PATHS",
+        "INNER_BUDGET",
+        "INNER_GATES",
+        "OUTER_MODE_NOTE",
+        "OUTER_GATES",
+        "KNOWLEDGE_LIST",
+        "SKILL_SLOTS",
+        "TESTING_APPROACH",
+        "DEBT"
+      ],
+      "upgrade": "merge",
+      "mergeRule": "Regenerate sections marked GENERATED (Architecture, Hotspots, Verification, Knowledge). Preserve every hand-written section, especially Known debt and Prose conventions. Report what was replaced."
+    },
+    {
+      "template": "agent/agents/reviewer.md.tmpl",
+      "output": ".agent/agents/reviewer.md",
+      "vars": [
+        "PROJECT_NAME",
+        "PROFILE_NAME",
+        "BASE_SHA",
+        "TASK_ID",
+        "CATALOG_PATH",
+        "ARCHITECTURE_MAP",
+        "HOTSPOTS"
+      ],
+      "upgrade": "overwrite",
+      "note": "BASE_SHA and TASK_ID stay as literal tokens - the orchestrator substitutes them per task at delegation time."
+    },
+    {
+      "template": "agent/adapters/codestudio.md.tmpl",
+      "output": ".agent/adapters/codestudio.md",
+      "vars": [],
+      "upgrade": "overwrite"
+    },
+    {
+      "template": "agent/adapters/claude-code.md.tmpl",
+      "output": ".agent/adapters/claude-code.md",
+      "vars": [],
+      "upgrade": "overwrite"
+    },
+    {
+      "template": "agent/adapters/generic.md.tmpl",
+      "output": ".agent/adapters/generic.md",
+      "vars": [],
+      "upgrade": "overwrite"
+    },
+    {
+      "template": "agent/progress.md.tmpl",
+      "output": ".agent/progress.md",
+      "vars": [
+        "PROJECT_NAME",
+        "GOALS",
+        "DATE",
+        "TIER",
+        "PROFILE",
+        "OVERLAY_LINE",
+        "HARNESS_VERSION",
+        "GATE_COUNT",
+        "TIER_CAVEAT"
+      ],
+      "upgrade": "preserve"
+    },
+    {
+      "template": "agent/index.json.tmpl",
+      "output": ".agent/tasks/index.json",
+      "vars": [],
+      "upgrade": "preserve",
+      "note": "Never regenerate. Migrating a legacy bare-array index is handled in task.py's loader."
+    },
+    {
+      "template": "wrappers/codestudio-instructions.md.tmpl",
+      "output": ".codestudio/codestudio-instructions.md",
+      "vars": [
+        "PROJECT_NAME",
+        "TIER",
+        "PROFILE",
+        "HARNESS_VERSION"
+      ],
+      "upgrade": "overwrite",
+      "emitWhen": "host includes codestudio",
+      "note": "Pointer only. Contains no protocol content, so it cannot drift."
+    },
+    {
+      "template": "wrappers/CLAUDE.md.tmpl",
+      "output": "CLAUDE.md",
+      "vars": [
+        "PROJECT_NAME",
+        "TIER",
+        "PROFILE",
+        "HARNESS_VERSION"
+      ],
+      "upgrade": "merge",
+      "emitWhen": "host includes claude-code",
+      "mergeRule": "CLAUDE.md often already exists with project instructions. Append the harness pointer section; never overwrite existing content."
+    },
+    {
+      "template": "wrappers/AGENTS.md.tmpl",
+      "output": "AGENTS.md",
+      "vars": [
+        "PROJECT_NAME",
+        "TIER",
+        "PROFILE",
+        "HARNESS_VERSION"
+      ],
+      "upgrade": "merge",
+      "emitWhen": "host includes cursor|codex|copilot|generic"
+    },
+    {
+      "template": "scripts/check-syncfusion-license.sh.tmpl",
+      "output": "scripts/check-syncfusion-license.sh",
+      "vars": [],
+      "upgrade": "overwrite",
+      "executable": true,
+      "emitWhen": "overlay includes syncfusion"
+    },
+    {
+      "template": "scripts/check-syncfusion-versions.sh.tmpl",
+      "output": "scripts/check-syncfusion-versions.sh",
+      "vars": [],
+      "upgrade": "overwrite",
+      "executable": true,
+      "emitWhen": "overlay includes syncfusion"
+    },
+    {
+      "template": "scripts/check-suppressions.sh.tmpl",
+      "output": "scripts/check-suppressions.sh",
+      "vars": [],
+      "upgrade": "overwrite",
+      "executable": true,
+      "emitWhen": "a no-lint-suppression gate is selected",
+      "note": "Takes BASE_REF as $1. Fails on a suppression added in the diff with no 'why:' justification."
+    },
+    {
+      "template": "scripts/leak-probe.sh.tmpl",
+      "output": "scripts/leak-probe.sh",
+      "vars": [],
+      "upgrade": "overwrite",
+      "executable": true,
+      "emitWhen": "tier is L3 and a dotnet leak gate is selected",
+      "note": "Requires a runnable leak-scenario host; the script explains the contract and fails with instructions if absent."
+    },
+    {
+      "template": "scripts/detect-syncfusion-components.sh.tmpl",
+      "output": "scripts/detect-syncfusion-components.sh",
+      "vars": [],
+      "upgrade": "overwrite",
+      "executable": true,
+      "emitWhen": "overlay includes syncfusion",
+      "note": "Greps for components in use, then RESOLVES each candidate against ai.syncfusion.com/<slug>/inventory.txt. Never emits a guessed identifier."
+    },
+    {
+      "template": "scripts/check-syncfusion-banner.sh.tmpl",
+      "output": "scripts/check-syncfusion-banner.sh",
+      "vars": [],
+      "upgrade": "overwrite",
+      "executable": true,
+      "emitWhen": "overlay includes syncfusion",
+      "note": "Enforces Syncfusion rule: never suppress, hide, catch or CSS-hide a licensing banner."
+    },
+    {
+      "template": "scripts/check-syncfusion-blazor-setup.sh.tmpl",
+      "output": "scripts/check-syncfusion-blazor-setup.sh",
+      "vars": [],
+      "upgrade": "overwrite",
+      "executable": true,
+      "emitWhen": "overlay includes syncfusion AND product includes blazor",
+      "note": "Catches three silent-failure modes: missing AddSyncfusionBlazor (empty render), missing theme stylesheet (unstyled), missing render mode in .NET 8+ (events never fire)."
+    }
+  ],
+  "generatedNotFromTemplate": [
+    {
+      "output": ".agent/harness.yaml",
+      "how": "Composed from the matched profile plus overlays, filtered to the chosen tier, with only gates whose tools resolved. Never emit a gate for an absent tool - emit the installHint in PROPOSE instead.",
+      "upgrade": "merge",
+      "mergeRule": "Append new profile gates. Preserve every existing threshold, custom gate, and hand edit. Report profile gates that were removed upstream rather than deleting them."
+    },
+    {
+      "output": ".agent/harness.lock",
+      "how": "python3 .agent/tools/harness.py lock",
+      "upgrade": "regenerate"
+    },
+    {
+      "output": ".agent/knowledge/*.md",
+      "how": "Fetched from the profile's and overlay's cited URLs. Every rule carries a Source: line with a retrieval date. If fetching is unavailable, write a stub naming the URL and stating that content was NOT retrieved - never fill the gap from model memory.",
+      "upgrade": "regenerate-and-report"
+    },
+    {
+      "output": "Directory.Build.props",
+      "how": "From references/roslyn-enforcement.md. Additive and idempotent.",
+      "upgrade": "merge",
+      "emitWhen": "profile family is dotnet"
+    },
+    {
+      "output": ".editorconfig",
+      "how": "The escalation set from references/roslyn-enforcement.md.",
+      "upgrade": "merge",
+      "mergeRule": "Never change a severity the repo already set. Report every rule left alone and why.",
+      "emitWhen": "profile family is dotnet"
+    },
+    {
+      "output": ".gitignore",
+      "how": "Append .agent/evidence/ only. Everything else in .agent/ is committed - a harness on one machine is not a harness.",
+      "upgrade": "merge"
+    },
+    {
+      "output": ".mcp.json or claude mcp add",
+      "how": "Per-platform Syncfusion MCP keyed on Syncfusion_API_Key_Path (exact casing). The harness writes the config referencing ~/.syncfusion/api-key.txt and NEVER writes the key. If the file is absent, record MCP as configured-but-unauthenticated and tell the user.",
+      "upgrade": "merge",
+      "emitWhen": "overlay includes syncfusion and the user opts in"
+    },
+    {
+      "output": ".agent/HARNESS-LOCK.json",
+      "how": "python3 .agent/tools/harness.py cp-lock \u2014 SHA-256 of every control-plane file",
+      "upgrade": "regenerate",
+      "note": "Checked by the harness-verify gate on every task. Without it the control plane is advisory: thresholds are protected by the ratchet, but a policy is just a markdown file."
+    },
+    {
+      "output": ".agent/PROJECT-STATE.md",
+      "how": "Phase, frozen roadmap, active task, open decisions, blockers. What a fresh session reads first.",
+      "upgrade": "preserve"
+    },
+    {
+      "output": ".agent/DECISIONS-REQUIRED.md",
+      "how": "The parking lot for lane-3 decisions. Created with its header even when empty.",
+      "upgrade": "preserve",
+      "note": "A parking lot that does not exist is one the agent will not use \u2014 it will block the loop instead, which violates the prime directive."
+    },
+    {
+      "output": ".agent/adr/",
+      "how": "Directory for accepted ADRs, seeded with a README pointing at templates/adr.md",
+      "upgrade": "preserve"
+    },
+    {
+      "output": ".agent/design.md",
+      "how": "Extracted from token files, theme objects, Tailwind config, CSS custom properties, or by colour frequency (labelled as observation). See references/design-system.md.",
+      "upgrade": "preserve",
+      "emitWhen": "a design system was found or extracted AND no design document already exists anywhere in the repo",
+      "note": "If a design document exists (design.md, DESIGN.md, docs/design-system.md, Storybook intro), REFERENCE it and never regenerate. Offer to append missing sections only. policies/design-system.md is emitted only alongside a real design.md - never against an invented system."
+    },
+    {
+      "output": "apm.yml + .apm/",
+      "how": "python3 .agent/tools/harness.py apm-export --name <pkg> --version <v>",
+      "upgrade": "regenerate",
+      "emitWhen": "the user asks to package the harness for reuse elsewhere",
+      "note": "Maps policies->instructions, agents->agents, workflows->prompts, machinery->a skill with siblings; rewrites cross-references to APM paths. Excludes tasks/, evidence/, harness.lock, PROJECT-STATE.md, DECISIONS-REQUIRED.md - the consuming repo re-locks. Offer, do not do unasked."
+    },
+    {
+      "output": "custom skills / gates / workflows / policies from the interview",
+      "how": "Classified per references/interview.md: command returning output -> skill; with a threshold -> gate; multi-step -> workflow; binding rule -> policy; live API -> MCP server. Check for a vendor MCP server before writing a script.",
+      "upgrade": "preserve",
+      "note": "Generate complete: script reads credentials from the environment, gate has parser+threshold+evidence, usedBy wired. An unreferenced custom primitive is an orphan and verify reports it."
+    }
+  ],
+  "controlPlane": {
+    "note": "Copied wholesale from control-plane/ into .agent/, then specialised. Counts are the completeness floor, not a padding target: emit a workflow only when the project can run it, an agent only when a workflow invokes it, a skill only when its command resolves.",
+    "source": "control-plane/",
+    "destination": ".agent/",
+    "upgrade": "merge-and-report",
+    "mergeRule": "Never overwrite a file the project has edited. Compare by frontmatter id and version: same version and different SHA means the team customised it - keep theirs and report the upstream diff. Add new files. Report removed ones rather than deleting.",
+    "directories": [
+      {
+        "dir": "workflows",
+        "floor": 15,
+        "specialise": "drop steps whose tool the project lacks, and say so in the workflow"
+      },
+      {
+        "dir": "agents",
+        "floor": 12,
+        "specialise": "code-reviewer gets the stack defect catalog + architecture map; every agent keeps its authority/mayNot frontmatter"
+      },
+      {
+        "dir": "policies",
+        "floor": 22,
+        "specialise": "autonomy-boundary park categories come from risk.requiresHumanApproval so the two cannot disagree"
+      },
+      {
+        "dir": "checklists",
+        "floor": 5,
+        "specialise": "none"
+      },
+      {
+        "dir": "templates",
+        "floor": 12,
+        "specialise": "none"
+      },
+      {
+        "dir": "skills",
+        "floor": 1,
+        "specialise": "generated from resolved commands per control-plane/skills/_catalog.md; a skill is a named command, a gate is a skill with a threshold"
+      }
+    ]
+  }
+}
