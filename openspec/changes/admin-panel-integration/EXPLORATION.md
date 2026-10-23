@@ -30,7 +30,7 @@ From `openspec/changes/custom-data-server/specs/data-server-backend/spec.md` (v2
 
 ### Defect found during inspection (normative to fix here — D6)
 
-`PivotController/appsettings.json` currently ships a **plaintext admin password** (`Security.Authorization.Password: "PivotAdmin@2026"`) — used by the user for backend testing (stated in the clarification rounds). A git-tracked plaintext credential violates the credential-hygiene requirement and is normalized by this change (template sanitized; standalone testing credentials move to user-secrets/env).
+`PivotController/appsettings.json` currently ships a **plaintext admin password** (`Security.Authorization.Password: "<literal value redacted from this spec; see the appsettings file on the working branch>"`) — used by the user for backend testing (stated in the clarification rounds). A git-tracked plaintext credential violates the credential-hygiene requirement and is normalized by this change (template sanitized; standalone testing credentials move to user-secrets/env). No spec file repeats the literal value.
 
 ### Panel-side context (from the companion repo)
 
