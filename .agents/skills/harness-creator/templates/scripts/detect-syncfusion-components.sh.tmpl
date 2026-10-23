@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+# Detect which Syncfusion components this repo actually uses, and emit the
+# matching agent-skill identifiers.
+#
+# Why: Syncfusion's guidance is explicit - "Do not load every skill or reference
+# into context" and "Install narrow skills, not full packs, when possible." The
+# Blazor pack alone is 72 skills; loading it wholesale is context the build agent
+# pays for on every delegation and mostly cannot use.
+#   Source: https://ai.syncfusion.com/llms.txt (retrieved 2026-09-01)
+#
+# Usage: detect-syncfusion-components.sh [platform-slug]
+#   Slug is auto-detected when omitted.
+#
+# Output: one `syncfusion-<slug>-<component>` identifier per line on stdout,
+# a human summary on stderr.
+#
+# IMPORTANT: these identifiers are constructed from component names and MUST be
+# validated against the authoritative inventory before use:
+#   https://ai.syncfusion.com/<slug>/inventory.txt   (skill_name column)
+# The script prints that URL so the agent can reconcile.
+
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+SKIP='-path ./node_modules -o -path ./.git -o -path */obj -o -path */bin -o -path ./dist -o -path ./.agent'
+
+# ---------------------------------------------------------------------------
+# Platform slug detection - from manifests, never from user language.
+# Mapping per https://ai.syncfusion.com/llms.txt (retrieved 2026-09-01)
+# ---------------------------------------------------------------------------
+detect_slug() {
+  local csproj pkg
+  csproj=$(find . \( $SKIP \) -prune -o -name '*.csproj' -print 2>/dev/null | head -50)
+  pkg=$(find . \( $SKIP \) -prune -o -name 'package.json' -print 2>/dev/null | head -20)
+
+  if [ -n "$csproj" ]; then
+    grep -lqE '<UseMaui>true</UseMaui>' $csproj 2>/dev/null && {
+      grep -qE 'Syncfusion\.Maui\.Toolkit' $csproj 2>/dev/null \
+        && { echo maui-toolkit; return; } || { echo maui; return; }; }
+    grep -lq 'Microsoft.NET.Sdk.BlazorWebAssembly' $csproj 2>/dev/null && { echo blazor; return; }
+    grep -lqE 'PackageReference Include="Syncfusion\.Blazor' $csproj 2>/dev/null && { echo blazor; return; }
+    grep -lqE '<UseWindowsForms>true</UseWindowsForms>' $csproj 2>/dev/null && { echo winforms; return; }
+    grep -lqE '<UseWPF>true</UseWPF>' $csproj 2>/dev/null && { echo wpf; return; }
+    grep -lq 'WindowsAppSDK' $csproj 2>/dev/null && { echo winui; return; }
+    grep -lq 'System.Web.Mvc' $csproj 2>/dev/null && { echo aspnet-mvc; return; }
+    grep -lq 'Microsoft.NET.Sdk.Web' $csproj 2>/dev/null && { echo aspnet-core; return; }
+    grep -lqE 'Syncfusion\.(DocIO|XlsIO|Pdf|Presentation)' $csproj 2>/dev/null && { echo document-sdk; return; }
+  fi
+  if [ -n "$pkg" ]; then
+    grep -lq '"@angular/core"' $pkg 2>/dev/null && { echo angular; return; }
+    grep -lqE '"react"' $pkg 2>/dev/null && { echo react; return; }
+    grep -lq '"vue"' $pkg 2>/dev/null && { echo vue; return; }
+    grep -lq '"@syncfusion/ej2' $pkg 2>/dev/null && { echo javascript; return; }
+  fi
+  [ -f pubspec.yaml ] && grep -q flutter pubspec.yaml 2>/dev/null && { echo flutter; return; }
+  echo unknown
+}
+
+SLUG="${1:-$(detect_slug)}"
+if [ "$SLUG" = "unknown" ]; then
+  echo "FAIL: could not determine the Syncfusion platform slug from manifests." >&2
+  echo "      Pass it explicitly. Slugs: react angular vue javascript blazor" >&2
+  echo "      aspnet-core aspnet-mvc flutter maui maui-toolkit winforms wpf winui document-sdk" >&2
+  exit 1
+fi
+echo "platform slug: $SLUG" >&2
+
+SRC_GLOBS=(-name '*.razor' -o -name '*.cs' -o -name '*.xaml' -o -name '*.ts'
+           -o -name '*.tsx' -o -name '*.js' -o -name '*.jsx' -o -name '*.vue'
+           -o -name '*.html' -o -name '*.cshtml' -o -name '*.dart')
+FILES=$(find . \( $SKIP \) -prune -o -type f \( "${SRC_GLOBS[@]}" \) -print 2>/dev/null)
+if [ -z "$FILES" ]; then
+  echo "FAIL: no source files found." >&2
+  exit 1
+fi
+
+emit() { echo "syncfusion-$SLUG-$1"; }
+
+# ---------------------------------------------------------------------------
+# .NET-family component detection: Sf<Component> tags and types.
+# ---------------------------------------------------------------------------
+detect_dotnet() {
+  echo "$FILES" | tr '\n' '\0' | xargs -0 grep -hoE '\bSf[A-Z][A-Za-z0-9]+' 2>/dev/null \
+    | sed 's/^Sf//' | sort -u | while read -r comp; do
+        case "$comp" in
+          # Normalise the names that differ from the skill identifier.
+          Grid|DataGrid)      emit datagrid ;;
+          PdfViewer*)         emit pdf-viewer ;;
+          DocumentEditor)     emit document-editor ;;
+          Spreadsheet)        emit spreadsheet ;;
+          RichTextEditor)     emit richtexteditor ;;
+          TreeGrid)           emit treegrid ;;
+          Chart|CircularGauge|LinearGauge|Diagram|Schedule|Scheduler|Gantt|Kanban|Maps|PivotTable|PivotView)
+                              emit "$(echo "$comp" | tr '[:upper:]' '[:lower:]')" ;;
+          *)                  emit "$(echo "$comp" | tr '[:upper:]' '[:lower:]')" ;;
+        esac
+      done
+}
+
+# ---------------------------------------------------------------------------
+# JS-family: the ej2 package a file imports is the reliable signal, more so than
+# the JSX tag name.
+# ---------------------------------------------------------------------------
+detect_js() {
+  echo "$FILES" | tr '\n' '\0' \
+    | xargs -0 grep -hoE '@syncfusion/ej2(-[a-z]+)?-([a-z0-9-]+)' 2>/dev/null \
+    | sed -E 's#@syncfusion/ej2(-(react|angular|vue))?-##' \
+    | sort -u | while read -r pkg; do
+        case "$pkg" in
+          base|data|popups|inputs|buttons|lists|navigations|splitbuttons|notifications) ;;  # infrastructure
+          grids)              emit grid ;;
+          pdfviewer)          emit pdf-viewer ;;
+          documenteditor)     emit document-editor ;;
+          richtexteditor)     emit richtexteditor ;;
+          *)                  emit "${pkg%s}" ;;   # depluralise: charts -> chart
+        esac
+      done
+  # also catch package.json declarations for components not yet imported
+  find . \( $SKIP \) -prune -o -name 'package.json' -print 2>/dev/null | tr '\n' '\0' \
+    | xargs -0 grep -hoE '"@syncfusion/ej2(-[a-z]+)?-([a-z0-9-]+)"' 2>/dev/null \
+    | tr -d '"' | sed -E 's#@syncfusion/ej2(-(react|angular|vue))?-##' \
+    | sort -u | while read -r pkg; do
+        case "$pkg" in
+          base|data|popups|inputs|buttons|lists|navigations|splitbuttons|notifications) ;;
+          grids) emit grid ;;
+          *)     emit "${pkg%s}" ;;
+        esac
+      done
+}
+
+# ---------------------------------------------------------------------------
+# Document SDK: the library type used is the signal.
+# ---------------------------------------------------------------------------
+detect_documents() {
+  echo "$FILES" | tr '\n' '\0' | xargs -0 grep -hoE \
+    '\b(WordDocument|ExcelEngine|PdfDocument|PdfLoadedDocument|IPresentation|PresentationImpl)\b' 2>/dev/null \
+    | sort -u | while read -r t; do
+        case "$t" in
+          WordDocument)                    emit word ;;
+          ExcelEngine)                     emit excel ;;
+          PdfDocument|PdfLoadedDocument)   emit pdf ;;
+          IPresentation|PresentationImpl)  emit powerpoint ;;
+        esac
+      done
+}
+
+case "$SLUG" in
+  react|angular|vue|javascript)                     RESULT=$(detect_js) ;;
+  document-sdk)                                     RESULT=$(detect_documents) ;;
+  blazor|maui|maui-toolkit|winforms|wpf|winui|aspnet-core|aspnet-mvc)
+                                                    RESULT=$(detect_dotnet) ;;
+  flutter)  RESULT=$(echo "$FILES" | tr '\n' '\0' \
+              | xargs -0 grep -hoE 'Sf[A-Z][A-Za-z0-9]+' 2>/dev/null \
+              | sed 's/^Sf//' | tr '[:upper:]' '[:lower:]' | sort -u \
+              | while read -r c; do emit "$c"; done) ;;
+  *)        RESULT="" ;;
+esac
+
+# Document-SDK usage can co-exist with any .NET UI platform.
+if [ "$SLUG" != "document-sdk" ]; then
+  DOCS=$(detect_documents 2>/dev/null | sed "s/^syncfusion-$SLUG-/syncfusion-document-sdk-/")
+  [ -n "$DOCS" ] && RESULT=$(printf '%s\n%s\n' "$RESULT" "$DOCS")
+fi
+
+RESULT=$(echo "$RESULT" | grep -E '^syncfusion-' | sort -u)
+
+# ---------------------------------------------------------------------------
+# Resolve against the AUTHORITATIVE inventory.
+#
+# Constructing identifiers from component names is unreliable: SfChart maps to
+# `syncfusion-blazor-charts` (plural) and SfSchedule to
+# `syncfusion-blazor-scheduler` (different word). So the constructed names above
+# are only candidates - the inventory's skill_name column is the source of truth.
+#   Source: https://ai.syncfusion.com/<slug>/inventory.txt (CSV; col 1 = skill_name)
+# ---------------------------------------------------------------------------
+CACHE_DIR="${SYNCFUSION_INVENTORY_CACHE:-.agent/evidence/syncfusion}"
+mkdir -p "$CACHE_DIR" 2>/dev/null
+
+fetch_inventory() {   # $1 = slug -> prints one skill_name per line, or nothing
+  local slug="$1"
+  local cache="$CACHE_DIR/inventory-$slug.csv"
+  # Re-use a cache younger than a day; the catalog moves with releases, not hourly.
+  if [ -s "$cache" ] && [ -z "$(find "$cache" -mtime +1 2>/dev/null)" ]; then
+    :
+  elif command -v curl >/dev/null 2>&1; then
+    curl -fsSL --max-time 25 "https://ai.syncfusion.com/$slug/inventory.txt" \
+      -o "$cache.tmp" 2>/dev/null && mv "$cache.tmp" "$cache" || rm -f "$cache.tmp"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO "$cache.tmp" "https://ai.syncfusion.com/$slug/inventory.txt" 2>/dev/null \
+      && mv "$cache.tmp" "$cache" || rm -f "$cache.tmp"
+  fi
+  [ -s "$cache" ] || return 1
+  # First CSV field of each row, skipping a header row if present.
+  cut -d, -f1 "$cache" | sed 's/^"//;s/"$//' | grep -E '^syncfusion-' | sort -u
+}
+
+resolve() {   # $1 = candidate, $2 = newline-separated valid names
+  local cand="$1"
+  local valid="$2"
+  local bare stem v
+  bare="${cand##syncfusion-*-}"                      # component part only
+  # 1. exact
+  echo "$valid" | grep -qxF "$cand" && { echo "$cand"; return 0; }
+  # 2. plural / singular variants  (chart <-> charts)
+  for v in "${cand}s" "${cand%s}"; do
+    echo "$valid" | grep -qxF "$v" && { echo "$v"; return 0; }
+  done
+  # 3. same stem, different word  (schedule -> scheduler)
+  stem=$(echo "$valid" | grep -E "^syncfusion-.*-${bare}[a-z]*$" | head -1)
+  [ -n "$stem" ] && { echo "$stem"; return 0; }
+  # 4. component name appears as a whole segment
+  stem=$(echo "$valid" | grep -E "(^|-)${bare}(-|$)" | head -1)
+  [ -n "$stem" ] && { echo "$stem"; return 0; }
+  return 1
+}
+
+# Derive slugs from the KNOWN set, not by regex-splitting the identifier: a
+# greedy match on syncfusion-blazor-pdf-viewer yields "blazor-pdf", which is not
+# a platform.
+SLUGS="$SLUG"
+echo "$RESULT" | grep -q '^syncfusion-document-sdk-' && SLUGS="$SLUGS document-sdk"
+SLUGS=$(echo "$SLUGS" | tr ' ' '\n' | grep -v '^$' | sort -u)
+VALIDATED=""; UNMATCHED=""; INVENTORY_OK=1
+for s in $SLUGS; do
+  VALID=$(fetch_inventory "$s") || { INVENTORY_OK=0; continue; }
+  echo "  inventory[$s]: $(echo "$VALID" | grep -c .) skills" >&2
+  for cand in $(echo "$RESULT" | grep "^syncfusion-$s-"); do
+    if match=$(resolve "$cand" "$VALID"); then
+      VALIDATED="$VALIDATED$match"$'\n'
+      [ "$match" != "$cand" ] && echo "    resolved $cand -> $match" >&2
+    else
+      UNMATCHED="$UNMATCHED$cand"$'\n'
+    fi
+  done
+done
+
+if [ "$INVENTORY_OK" -eq 1 ] && [ -n "$VALIDATED" ]; then
+  FINAL=$(echo "$VALIDATED" | grep -E '^syncfusion-' | sort -u)
+  SOURCE="validated against ai.syncfusion.com inventory"
+else
+  FINAL="$RESULT"
+  SOURCE="UNVALIDATED (inventory unreachable - names are constructed and may be wrong)"
+fi
+
+COUNT=$(echo "$FINAL" | grep -c . || true)
+if [ "$COUNT" -eq 0 ]; then
+  echo "No Syncfusion component usage detected. Install the onboarding skill only;" >&2
+  echo "add component skills when components are actually introduced." >&2
+  exit 0
+fi
+
+echo "$FINAL"
+{
+  echo ""
+  echo "$COUNT skill(s) for platform '$SLUG' - $SOURCE"
+  if [ -n "$UNMATCHED" ]; then
+    echo ""
+    echo "NOT FOUND in the inventory (component detected, no matching skill):"
+    echo "$UNMATCHED" | grep -E '^syncfusion-' | sed 's/^/  /'
+    echo "  -> check the inventory by hand; do not install a guessed identifier."
+  fi
+  if [ "$INVENTORY_OK" -ne 1 ]; then
+    echo ""
+    echo "WARNING: could not reach https://ai.syncfusion.com/<slug>/inventory.txt"
+    echo "  The names above are CONSTRUCTED from component names and are unreliable"
+    echo "  (SfChart -> 'charts', SfSchedule -> 'scheduler'). Validate before installing."
+  fi
+  echo ""
+  echo "Install narrowly (Syncfusion: \"Install narrow skills, not full packs\"):"
+  echo "  npx skills add syncfusion/<pack-name> --skill <skill_name> --agent <agent> -y"
+} >&2
