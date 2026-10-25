@@ -151,12 +151,14 @@ if (httpsErrors.Count > 0)
     Environment.Exit(1);
 }
 
-builder.Services.AddControllers().AddJsonOptions(options =>
-{
-    options.JsonSerializerOptions.Converters.Add(new CsvDecimalSeparatorConverter());
-    options.JsonSerializerOptions.Converters.Add(new CsvThousandsSeparatorConverter());
-    options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-});
+builder.Services.AddControllers()
+    .AddApplicationPart(typeof(DataServerHostBuilder).Assembly)
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new CsvDecimalSeparatorConverter());
+        options.JsonSerializerOptions.Converters.Add(new CsvThousandsSeparatorConverter());
+        options.JsonSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 // Security settings (Step 5, spec §5): Authorization.Enabled + CORS.AllowOrigin.
