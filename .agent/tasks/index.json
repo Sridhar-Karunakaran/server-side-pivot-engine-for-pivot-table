@@ -7,11 +7,13 @@
       "title": "Establish reproducible Release build (L0 characterization)",
       "type": "feature",
       "source": "harness-bootstrap",
-      "status": "todo",
+      "status": "active",
       "gates": [
         "build"
       ],
-      "notes": "First task per the L0 tier contract: nothing else is verifiable until `dotnet build -c Release` passes deterministically on the untouched tree."
+      "notes": "First task per the L0 tier contract: nothing else is verifiable until `dotnet build -c Release` passes deterministically on the untouched tree.",
+      "startedAt": "2026-10-25T10:32:21+00:00",
+      "baseSha": "2dec119552a803a5bc0d8ce74af1881e0aecdf24"
     },
     {
       "id": "T-002",
@@ -95,5 +97,7 @@
       ],
       "notes": "DR-3 answered: logs/dataserver-{yyyyMMdd}.jsonl at content root. Current-file only, MinimumLogLevel filter, no path traversal."
     }
-  ]
+  ],
+  "nextId": 9,
+  "doneLedger": []
 }
