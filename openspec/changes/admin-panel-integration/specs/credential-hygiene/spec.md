@@ -6,9 +6,9 @@
 
 ---
 
-## Requirements
+## ADDED Requirements
 
-### 1. No Plaintext Secrets in Version Control
+### Requirement: 1. No Plaintext Secrets in Version Control
 
 The repository **SHALL NOT** contain plaintext credentials in git-tracked files. Specifically:
 
@@ -29,7 +29,7 @@ The repository **SHALL NOT** contain plaintext credentials in git-tracked files.
 - When: This change lands
 - Then: HEAD no longer carries the secret; the README instructs operators to rotate any credential previously committed (documented limitation: history rewrite is out of scope)
 
-### 2. Never Logged
+### Requirement: 2. Never Logged
 
 No secret value — connection strings (full or partial), passwords, PFX passwords, Basic credentials, API keys — **SHALL** be written to any log (console, rolling JSONL file) by any code path. The existing redaction audit **SHALL** be extended to cover the new endpoints (`config-import`, `security-user-store`, `monitoring`, `diagnostics-logs`) and the panel-mode bootstrap.
 
@@ -39,7 +39,7 @@ No secret value — connection strings (full or partial), passwords, PFX passwor
 - When: Import is applied
 - Then: No log line (any level, any category) contains the password or connection strings
 
-### 3. Never Returned
+### Requirement: 3. Never Returned
 
 No API response **SHALL** include secret material:
 
@@ -54,7 +54,7 @@ No API response **SHALL** include secret material:
 - When: `GET /api/config/https`
 - Then: The response contains no password field value (null/omitted as today)
 
-### 4. Storage Rules
+### Requirement: 4. Storage Rules
 
 - Secrets at rest: only where the existing design already stores them — `users.json` **hashes** (never plaintext), sanitized `https.json` (no password), user-secrets/env for standalone testing. The panel file (`dataserver-admin-config.json`, panel repo) never stores passwords (its spec enforces the same rule).
 - `Https.PfxPassword` survives restarts only via the documented appsettings/user-secrets path in standalone mode (existing behavior); panel mode holds it in memory after import/PUT.
@@ -65,7 +65,7 @@ No API response **SHALL** include secret material:
 - When: `DataServer/users.json` is inspected
 - Then: Only PBKDF2 hash + salt are present
 
-### 5. Verification Gate
+### Requirement: 5. Verification Gate
 
 A credential-hygiene verification step **SHALL** be part of the implementation gate for this change (and the companion panel change): scan templates + a representative log run for credential patterns (passwords, `Password=`, connection-string fragments) and assert zero findings.
 

@@ -6,9 +6,11 @@
 
 ---
 
-## Requirements
+## ADDED Requirements
 
-### 1. Endpoint Contract
+### Requirement: 1. Endpoint Contract
+
+The backend **SHALL** expose `GET /api/monitoring` returning the server's process working set, uptime, and the current active-connection registry, in this shape:
 
 ```
 GET /api/monitoring
@@ -31,7 +33,7 @@ GET /api/monitoring
 - When: `GET /api/monitoring`
 - Then: 200 with a positive `workingSetBytes`, a non-empty `uptime`, and one entry whose `requestType`, `initiationTimestamp`, `requestDuration`, `ipAddress`, and `index` are populated
 
-### 2. Active Request Registry
+### Requirement: 2. Active Request Registry
 
 The server **SHALL** maintain an in-memory registry populated by middleware at request start (request id, method+path, timestamp, remote IP) and cleared at request completion. `index` **SHALL** be resolved where cheaply available (pivot `?index=`/body index; index endpoints' `{index}` route value); otherwise `null`. The registry **MUST NOT** persist request bodies, headers, credentials, or query strings (D6).
 
@@ -47,7 +49,7 @@ The server **SHALL** maintain an in-memory registry populated by middleware at r
 - When: `GET /api/monitoring`
 - Then: The entry shows `index: "Sales-Data"`
 
-### 3. Auth & CORS
+### Requirement: 3. Auth & CORS
 
 The endpoint **SHALL** require Basic Auth when enabled (401 otherwise) and follow the existing CORS rules. The payload **MUST NOT** contain secrets of any kind (D6).
 
@@ -57,7 +59,7 @@ The endpoint **SHALL** require Basic Auth when enabled (401 otherwise) and follo
 - When: `GET /api/monitoring` without credentials
 - Then: 401; with a valid user credential, 200
 
-### 4. Performance
+### Requirement: 4. Performance
 
 The registry **SHALL** be O(1) add/remove per request with no I/O on the hot path; `GET /api/monitoring` **SHALL** itself appear in the registry (self-observability) or be excluded consistently — the panel renders whatever the server reports without client-side filtering.
 
@@ -67,7 +69,7 @@ The registry **SHALL** be O(1) add/remove per request with no I/O on the hot pat
 - When: The registry is active
 - Then: Throughput/latency overhead stays negligible (no serialization of bodies, no locks held across awaits)
 
-### 5. Server Stopped Behavior
+### Requirement: 5. Server Stopped Behavior
 
 When the host is stopped (panel mode), the endpoint is unreachable by definition (no listener); the panel handles that state with its stopped/unreachable dialog — no server-side requirement.
 

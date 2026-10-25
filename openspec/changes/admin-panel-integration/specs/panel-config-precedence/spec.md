@@ -6,9 +6,9 @@
 
 ---
 
-## Requirements
+## ADDED Requirements
 
-### 1. Panel-Mode Bootstrap Entry Point
+### Requirement: 1. Panel-Mode Bootstrap Entry Point
 
 The backend **SHALL** expose a host-construction entry point (`BuildDataServerHost(panelConfigPath)`) that builds the ASP.NET Core `WebApplication` with the panel file added as the **first** JSON configuration source, ahead of `appsettings.json`, `appsettings.{env}.json`, environment variables, and command line.
 
@@ -26,7 +26,7 @@ The backend **SHALL** expose a host-construction entry point (`BuildDataServerHo
 - Then: Every data-server setting and every index resolves from the panel file
 - And: Conflicting values in backend `appsettings.json` data-server sections are ignored
 
-### 2. Overlay Suppression in Panel Mode
+### Requirement: 2. Overlay Suppression in Panel Mode
 
 In panel mode, the `{DataFolder}/*.json` persisted overlays **SHALL NOT** be loaded (CL-1). In standalone mode (no panel path), today's behavior — appsettings + overlays with non-null-wins precedence — **SHALL** remain unchanged.
 
@@ -37,7 +37,7 @@ In panel mode, the `{DataFolder}/*.json` persisted overlays **SHALL NOT** be loa
 - Then: The overlay applies exactly as today (non-null wins, loud log)
 - And: No panel-file logic interferes
 
-### 3. Missing/Invalid Panel File
+### Requirement: 3. Missing/Invalid Panel File
 
 A missing, unreadable, or invalid panel file in panel mode **SHALL** fail host construction with a clear error naming the file path; the backend **MUST NOT** silently fall back to `appsettings.json` data-server sections in panel mode.
 
@@ -48,7 +48,7 @@ A missing, unreadable, or invalid panel file in panel mode **SHALL** fail host c
 - Then: Construction fails with an error naming the path and stating the file is required in panel mode
 - And: No listener is bound
 
-### 4. Validation & Reuse
+### Requirement: 4. Validation & Reuse
 
 The panel file **SHALL** pass through the existing startup validation pipeline (per-section validators, cross-field rules, path-traversal checks, zero-user rule per `security-user-store`) before `Listen`. A validation failure fails startup exactly as today's invalid `appsettings.json` would.
 
@@ -59,7 +59,7 @@ The panel file **SHALL** pass through the existing startup validation pipeline (
 - Then: Startup fails with the existing port-range message
 - And: Exit is non-zero / error surfaces to the panel's start-failure dialog
 
-### 5. Restart Re-Read
+### Requirement: 5. Restart Re-Read
 
 Every host Start/Restart in panel mode **SHALL** re-read the panel file from disk (no caching across host builds), so panel write-throughs and imports take effect on the next Start/Restart.
 
@@ -69,7 +69,7 @@ Every host Start/Restart in panel mode **SHALL** re-read the panel file from dis
 - When: The panel file's Port changes on disk and the host restarts
 - Then: The new host binds the new port
 
-### 6. Source Logging
+### Requirement: 6. Source Logging
 
 Startup **SHALL** log which source produced the active configuration — `"Data Server configuration loaded from <panel path> (panel mode)"` vs `"... from appsettings.json (standalone mode)"` — and the deprecation note for ignored `appsettings.json` data-server sections in panel mode.
 

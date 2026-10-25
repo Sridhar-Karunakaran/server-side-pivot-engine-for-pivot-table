@@ -6,9 +6,9 @@
 
 ---
 
-## Requirements
+## ADDED Requirements
 
-### 1. Endpoint Contract
+### Requirement: 1. Endpoint Contract
 
 ```
 GET /api/diagnostics/logs?lines=200      (default 200 — locked (c); hard cap 1000)
@@ -31,7 +31,7 @@ Entries **SHALL** preserve file order (oldest → newest of the returned tail).
 - When: `GET /api/diagnostics/logs?lines=50`
 - Then: The last 50 entries are returned
 
-### 2. Source & Filtering
+### Requirement: 2. Source & Filtering
 
 The endpoint **SHALL** read only the **current** rolling file (`{DataFolder}/logs/dataserver-{yyyyMMdd}.jsonl`) — no historical files, no arbitrary path parameters (CL-7 scope). Entries below the active `MinimumLogLevel` **SHALL NOT** be returned (server-side filter, consistent with the console provider's threshold). Categories remain the existing set (`DataServer.Config | Security | Indexing | DatabaseQuery | ReportSharing | Https | Pivot`).
 
@@ -47,7 +47,7 @@ The endpoint **SHALL** read only the **current** rolling file (`{DataFolder}/log
 - When: Any request
 - Then: No category/date/text filters are accepted or applied (only `lines`)
 
-### 3. Secret Redaction
+### Requirement: 3. Secret Redaction
 
 The payload **MUST NOT** contain secrets (connection strings, passwords, tokens). Because the logger already redacts at write time, the endpoint **SHALL** additionally scan rendered lines for credential patterns before response (defense in depth, D6).
 
@@ -57,7 +57,7 @@ The payload **MUST NOT** contain secrets (connection strings, passwords, tokens)
 - When: `GET /api/diagnostics/logs`
 - Then: No line contains connection-string or password material
 
-### 4. Auth & CORS
+### Requirement: 4. Auth & CORS
 
 The endpoint **SHALL** require Basic Auth when enabled (401 otherwise) and follow the existing CORS rules.
 
@@ -67,7 +67,7 @@ The endpoint **SHALL** require Basic Auth when enabled (401 otherwise) and follo
 - When: `GET /api/diagnostics/logs` without credentials
 - Then: 401; with a valid credential, 200
 
-### 5. Empty & Edge States
+### Requirement: 5. Empty & Edge States
 
 - Empty/missing log file ⇒ 200 with `lines: []` and `file: null` (or the expected path with a note) — never an error.
 - Rolled-midnight files: the endpoint reads the file current at request time; no cross-file stitching.

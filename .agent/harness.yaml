@@ -44,7 +44,7 @@ gates:
     claim: "openspec planning artifacts for the active change are complete and well-formed"
     tool: openspec
     license: "MIT (free, commercial use OK)"
-    command: bash -lc 'cd "$REPO" && openspec status --change admin-panel-integration && openspec validate --change admin-panel-integration'
+    command: bash -lc 'export PATH="$HOME/.local-tools/node_modules/.bin:$PATH"; cd "$REPO" && openspec status --change admin-panel-integration && openspec validate admin-panel-integration'
     parser: exitcode
     threshold: exit == 0
     blocking: true

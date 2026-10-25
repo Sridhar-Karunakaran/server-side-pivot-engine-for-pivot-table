@@ -6,9 +6,9 @@
 
 ---
 
-## Requirements
+## ADDED Requirements
 
-### 1. Endpoint Contract
+### Requirement: 1. Endpoint Contract
 
 ```
 POST /api/config/import
@@ -26,7 +26,7 @@ The endpoint **SHALL** load the file **server-side** from the given path, valida
 - When: `POST /api/config/import { "path": "D:\\configs\\server-config.json" }`
 - Then: The response is 200 with the applied configuration and its restart-required field list
 
-### 2. Import File Schema (full — CL-5)
+### Requirement: 2. Import File Schema (full — CL-5)
 
 The imported file **SHALL** use the **same schema as `dataserver-admin-config.json`** (and the backend's data-server `appsettings.json` sections): `General` (Port, MinimumLogLevel, DataFolder), `DataStorage` (RetryAttempts, CacheSizeLimit, KeepDataOnRefresh, MaxCacheItemSizeBytes), `DatabaseQuery` (CommandTimeoutEnabled, CommandTimeLimit), `Https` (Enabled, PfxPath, PemCertPath, PemKeyPath, StoreLocation, StoreName, Thumbprint, SubjectName, Protocols), `Security` (Authorization.Enabled, CORS.AllowOrigin), `ReportSharingOptions` (EndpointEnabled, PathToFolder, ReportExpirationTime, MaxSizeOfFolder, AutoDeletingEnabled), and `DataServer.Indexes[]` (full `IndexDefinition` field set). Missing top-level sections **SHALL** be treated as absent (not defaulted-and-replaced) only when the whole section is omitted; **present-but-empty containers are invalid** for `DataServer.Indexes` (at least one index is required to replace an existing non-empty index set — see §4).
 
@@ -36,7 +36,7 @@ The imported file **SHALL** use the **same schema as `dataserver-admin-config.js
 - When: It is imported on a fresh server
 - Then: Settings and indexes match the source configuration exactly
 
-### 3. Transactional Validation
+### Requirement: 3. Transactional Validation
 
 The server **SHALL** validate the **entire** file (settings sections via the existing validators + every index definition) **before** applying anything. On any validation error, it **SHALL** return 422 with field-level `errors` and apply **nothing** — the current configuration remains fully intact.
 
@@ -53,7 +53,7 @@ The server **SHALL** validate the **entire** file (settings sections via the exi
 - When: Import is requested
 - Then: 422 with the port-range error; nothing applied
 
-### 4. Replace Semantics (settings AND indexes)
+### Requirement: 4. Replace Semantics (settings AND indexes)
 
 On success, the server **SHALL**:
 
@@ -76,7 +76,7 @@ On success, the server **SHALL**:
 - Then: `requiresRestartFields` includes the HTTPS fields but **not** the port
 - And: Restart binds TLS
 
-### 5. Failure Atomicity
+### Requirement: 5. Failure Atomicity
 
 The apply phase **SHALL** be atomic: the pre-import settings + index set are staged; any mid-apply failure **MUST** roll back to the staged state and return 502 with the error, leaving nothing half-applied.
 
@@ -87,7 +87,7 @@ The apply phase **SHALL** be atomic: the pre-import settings + index set are sta
 - Then: The pre-import configuration is restored exactly
 - And: 502 carries the underlying error message
 
-### 6. Secrets Handling
+### Requirement: 6. Secrets Handling
 
 Imported secret values (`Https.PfxPassword`, any credential material) **SHALL** be applied in memory and persisted only via the existing sanitized stores; the response **MUST NOT** echo them; logs **MUST NOT** contain them (D6).
 
@@ -97,7 +97,7 @@ Imported secret values (`Https.PfxPassword`, any credential material) **SHALL** 
 - When: Import succeeds
 - Then: HTTPS uses it after restart; the 200 response omits it; log lines contain no secret
 
-### 7. Auth & Guardrails
+### Requirement: 7. Auth & Guardrails
 
 The endpoint **SHALL** require Basic Auth when enabled (401 otherwise), **SHALL NOT** accept relative/traversing paths (`..` in the resolved path ⇒ 422), and **SHALL** be excluded from CORS wildcard behavior per the existing auth-on origins rule.
 

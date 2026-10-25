@@ -6,9 +6,9 @@
 
 ---
 
-## Requirements
+## ADDED Requirements
 
-### 1. User Store
+### Requirement: 1. User Store
 
 The backend **SHALL** maintain `DataServer/users.json` (atomic writes, same store family as `indexes.json`), holding one record per user: `{ username, hash (PBKDF2), salt, createdAt, updatedAt }`. **No plaintext or reversible password material is ever stored.** Usernames are unique, case-insensitive, and immutable after creation.
 
@@ -19,7 +19,7 @@ The backend **SHALL** maintain `DataServer/users.json` (atomic writes, same stor
 - Then: `users.json` contains the username, a PBKDF2 hash, and salt — no plaintext
 - And: The response is 201 with `{ username, createdAt }` only
 
-### 2. User CRUD API
+### Requirement: 2. User CRUD API
 
 ```
 GET    /api/security/users              → 200 [ { username, createdAt, updatedAt } ]
@@ -42,7 +42,7 @@ DELETE /api/security/users/{username}                                → 204
 - When: `DELETE /api/security/users/admin` (204)
 - Then: `admin`'s credential returns 401 immediately on any endpoint
 
-### 3. Basic Auth Against the Store
+### Requirement: 3. Basic Auth Against the Store
 
 When `Security.Authorization.Enabled` is true, the Basic-auth middleware **SHALL** validate the presented credential against **every** user record (salted hash + constant-time comparison); a match on any user grants access. A miss ⇒ 401 with `WWW-Authenticate: Basic realm`. This applies to **all** Data Server endpoints: `/api/pivot/*`, `/api/indexes/*`, `/api/config/*`, `/api/security/users/*`, `/api/config/import`, `/api/monitoring`, `/api/diagnostics/logs`, `/api/reportsharing/*` — with the existing CORS preflight exemption (OPTIONS never requires credentials).
 
@@ -60,7 +60,7 @@ When `Security.Authorization.Enabled` is true, the Basic-auth middleware **SHALL
 - When: A CORS preflight OPTIONS arrives without credentials
 - Then: 204 with CORS headers (unchanged §5.2.11 behavior)
 
-### 4. Zero-User Rule (CL-4, server-side)
+### Requirement: 4. Zero-User Rule (CL-4, server-side)
 
 Enabling authorization (`Security.Authorization.Enabled = true`) while the user store is **empty SHALL** be rejected: `PUT /api/config/security` returns 422 with a message directing to user creation; startup with that state **fails fast** (mirroring §5.2.8's missing-credentials behavior). Deleting the **last** user while auth is enabled **SHALL** be allowed with a 200/204 plus a warning header/log ("last user removed — authentication will reject all requests until a user is added"); the panel surfaces this state via the zero-user guard on next enable.
 
@@ -77,7 +77,7 @@ Enabling authorization (`Security.Authorization.Enabled = true`) while the user 
 - Then: 204 with a warning that no users remain
 - And: Subsequent authenticated requests all fail 401 until a user is created
 
-### 5. Deprecation of the Single Pair (CL-3)
+### Requirement: 5. Deprecation of the Single Pair (CL-3)
 
 `Security.Authorization.Username/Password` **SHALL** be deprecated: the shipped `appsettings.json` template removes them; authentication resolves **only** against the user store; a stale pair present in a custom config produces a one-time startup deprecation log. **BREAKING** for standalone test setups: they must provision a user (user-secrets/env + `POST /api/security/users`, or the panel's Security tab).
 
@@ -93,7 +93,7 @@ Enabling authorization (`Security.Authorization.Enabled = true`) while the user 
 - When: The application starts
 - Then: Startup fails with the zero-user message (same class as §5.2.8)
 
-### 6. Credential Hygiene (D6)
+### Requirement: 6. Credential Hygiene (D6)
 
 User passwords **MUST NOT** be logged, returned by any API, or persisted in plaintext anywhere. Validation timing **MUST** be constant-time per user. The store file **MUST** be excluded from logs and diagnostics output.
 

@@ -2,7 +2,7 @@
 
 **Repo:** server-side-pivot-engine-for-pivot-table (Syncfusion Pivot Data Server)
 **Branch:** `bc/4792425e-detailed-functional`
-**Phase:** Harness generated (L0). Implementation NOT started.
+**Phase:** Harness generated + verified (L0). All parked decisions ANSWERED (2026-10-23): DR-1 sanitize-as-task (owner accepts history exposure for this test-only credential, rotates on reuse); DR-2 panel-created first admin (no seed); DR-3 logs at content root (`logs/dataserver-{yyyyMMdd}.jsonl`); DR-4 in-flight + 60s completed retention; DR-5 L0 floor until the first test-bearing task, then raise to L1 with a regenerated lock. Implementation READY to start.
 
 ## Program context
 
