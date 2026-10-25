@@ -1,1 +1,5 @@
 {"ts": "2026-10-25T10:32:21+00:00", "event": "pick", "id": "T-001", "baseSha": "2dec119552a803a5bc0d8ce74af1881e0aecdf24"}
+{"ts": "2026-10-25T10:37:11+00:00", "event": "defer", "id": "T-001", "reason": "https-live baseline fails due to pre-existing plaintext credential in appsettings.json (Security.Authorization.Enabled=true) \u2014 unblocking via D6 T-003 first, then T-001 gates green"}
+{"ts": "2026-10-25T10:37:11+00:00", "event": "pick", "id": "T-002", "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba"}
+{"ts": "2026-10-25T10:37:12+00:00", "event": "defer", "id": "T-002", "reason": "deferring one step: D6 credential sanitize (T-003) unblocks the https-live baseline gate that T-001/T-002 characterization depends on"}
+{"ts": "2026-10-25T10:37:12+00:00", "event": "pick", "id": "T-003", "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba"}
