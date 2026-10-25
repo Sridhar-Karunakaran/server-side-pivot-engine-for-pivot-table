@@ -20,8 +20,20 @@ namespace PivotController.Indexing
             var lastRun = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
             var startedAt = DateTime.UtcNow;
 
-            while (!stoppingToken.IsCancellationRequested && await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+            while (!stoppingToken.IsCancellationRequested)
             {
+                try
+                {
+                    if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+                    {
+                        break;
+                    }
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
                 foreach (var status in _indexManager.ListIndexes())
                 {
                     if (!_indexManager.TryGetDefinition(status.Index, out var definition)
