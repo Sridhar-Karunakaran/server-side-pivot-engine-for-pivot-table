@@ -1,0 +1,99 @@
+{
+  "schema": "agent-tasks/v2",
+  "project": "server-side-pivot-engine-for-pivot-table",
+  "tasks": [
+    {
+      "id": "T-001",
+      "title": "Establish reproducible Release build (L0 characterization)",
+      "type": "feature",
+      "source": "harness-bootstrap",
+      "status": "todo",
+      "gates": [
+        "build"
+      ],
+      "notes": "First task per the L0 tier contract: nothing else is verifiable until `dotnet build -c Release` passes deterministically on the untouched tree."
+    },
+    {
+      "id": "T-002",
+      "title": "Extract verify-dbtimeout.sh characterization script",
+      "type": "feature",
+      "source": "admin-panel-integration/tasks.md M0 + project-context.md debt",
+      "status": "todo",
+      "gates": [
+        "db-query-timeout-live"
+      ],
+      "notes": "Phase-1 timeout verification was manual. Extract to a repo script so the D-delta work has its oracle; gate reports skip until present."
+    },
+    {
+      "id": "T-003",
+      "title": "D6: sanitize appsettings.json credential template + user-secrets README",
+      "type": "security",
+      "source": "admin-panel-integration/specs/credential-hygiene/spec.md \u00a71",
+      "status": "todo",
+      "gates": [
+        "no-secrets"
+      ],
+      "notes": "DR-1 answered (2026-10-23): owner accepts history exposure for this test-only credential and rotates on reuse; sanitize as a normal task. Never write the old value anywhere."
+    },
+    {
+      "id": "T-004",
+      "title": "D1: BuildDataServerHost(panelConfigPath) bootstrap + precedence + overlay mode-gating",
+      "type": "feature",
+      "source": "admin-panel-integration/specs/panel-config-precedence/spec.md",
+      "status": "todo",
+      "gates": [
+        "build",
+        "https-live",
+        "cache-live"
+      ],
+      "notes": "Refactor Program.cs bootstrap; panel file PRIMARY, overlays standalone-only; loud source log. Companion MAUI repo consumes this."
+    },
+    {
+      "id": "T-005",
+      "title": "D2: POST /api/config/import (load, validate, full REPLACE)",
+      "type": "api-change",
+      "source": "admin-panel-integration/specs/config-import/spec.md",
+      "status": "todo",
+      "gates": [
+        "build",
+        "no-secrets"
+      ],
+      "notes": "REPLACE semantics, 422 on invalid with nothing applied, requiresRestartFields response. API-review checklist required."
+    },
+    {
+      "id": "T-006",
+      "title": "D3: users.json store + /api/security/users CRUD + BasicAuth store validation",
+      "type": "security",
+      "source": "admin-panel-integration/specs/security-user-store/spec.md",
+      "status": "todo",
+      "gates": [
+        "build",
+        "no-secrets"
+      ],
+      "notes": "DR-2 answered: panel-created first admin (no migration seed). Reuses Core/Security PBKDF2 primitives; zero-user enable rejection; risk glob Security/** applies."
+    },
+    {
+      "id": "T-007",
+      "title": "D4: GET /api/monitoring (working set + active connections)",
+      "type": "feature",
+      "source": "admin-panel-integration/specs/monitoring/spec.md",
+      "status": "todo",
+      "gates": [
+        "build"
+      ],
+      "notes": "DR-4 answered: in-flight + 60s completed retention. No bodies/credentials in registry."
+    },
+    {
+      "id": "T-008",
+      "title": "D5: GET /api/diagnostics/logs?lines= (200-line tail, redaction)",
+      "type": "feature",
+      "source": "admin-panel-integration/specs/diagnostics-logs/spec.md",
+      "status": "todo",
+      "gates": [
+        "build",
+        "no-secrets"
+      ],
+      "notes": "DR-3 answered: logs/dataserver-{yyyyMMdd}.jsonl at content root. Current-file only, MinimumLogLevel filter, no path traversal."
+    }
+  ]
+}

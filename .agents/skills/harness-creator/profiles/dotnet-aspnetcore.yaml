@@ -1,0 +1,139 @@
+id: dotnet-aspnetcore
+name: ASP.NET Core (Web API / MVC)
+extends: dotnet-common
+catalog: catalogs/defects-aspnetcore.md
+
+detect:
+  requires:
+    - glob: "**/*.csproj"
+  signals:
+    - kind: fileContains
+      value: "**/*.csproj::Microsoft\\.NET\\.Sdk\\.Web"
+      weight: 10
+    - kind: glob
+      value: "**/Program.cs"
+      weight: 3
+    - kind: packageRef
+      value: Microsoft.EntityFrameworkCore
+      weight: 5
+    - kind: packageRef
+      value: Swashbuckle.AspNetCore
+      weight: 4
+  excludes:
+    - packageRef: Microsoft.AspNetCore.Components.Web
+
+runtime:
+  buildCommand: dotnet build
+  testCommand: dotnet test
+
+knowledge:
+  - id: aspnetcore-di
+    url: https://learn.microsoft.com/aspnet/core/fundamentals/dependency-injection
+    topics: [DI, lifetimes, captive-dependency, scope-validation]
+    required: true
+  - id: efcore-performance
+    url: https://learn.microsoft.com/ef/core/performance/efficient-querying
+    topics: [N+1, AsNoTracking, split-queries]
+    required: true
+  - id: aspnetcore-security
+    url: https://learn.microsoft.com/aspnet/core/security/
+    topics: [authz, antiforgery, data-protection]
+    required: true
+  - id: owasp-asvs
+    url: https://owasp.org/www-project-application-security-verification-standard/
+    topics: [security-requirements]
+    required: false
+
+gates:
+  - id: di-validation
+    tier: L1
+    lane: inner
+    claim: "the DI container builds with scope validation enabled"
+    tool: dotnet-test
+    license: "MIT (free, commercial use OK)"
+    command: dotnet test --nologo --filter Category=Startup --logger "trx;LogFileName={EVIDENCE_DIR}/startup.trx"
+    parser: trx
+    evidence: "{EVIDENCE_DIR}/startup.trx"
+    threshold: failed == 0
+    blocking: true
+    docs: https://learn.microsoft.com/aspnet/core/fundamentals/dependency-injection#scope-validation
+    rationale: >
+      With ValidateScopes and ValidateOnBuild on, captive dependencies (a
+      singleton holding a scoped service, or a singleton DbContext) fail at
+      startup instead of corrupting state under concurrency. Converts the top
+      ASP.NET Core review finding into a gate.
+
+  - id: efcore-warnings
+    tier: L1
+    lane: inner
+    claim: "no N+1 or cartesian-explosion query patterns"
+    tool: efcore
+    license: "MIT (free, commercial use OK)"
+    command: dotnet test --nologo --filter Category=Integration --logger "trx;LogFileName={EVIDENCE_DIR}/ef.trx"
+    parser: trx
+    evidence: "{EVIDENCE_DIR}/ef.trx"
+    threshold: failed == 0
+    blocking: true
+    docs: https://learn.microsoft.com/ef/core/logging-events-diagnostics/events
+    rationale: >
+      Configure the test fixture with ConfigureWarnings(w => w.Throw(
+      RelationalEventId.MultipleCollectionIncludeWarning, CoreEventId
+      .NavigationLazyLoading)). An N+1 then fails a test rather than surviving
+      review and dying in production.
+
+  - id: sast
+    tier: L2
+    lane: outer
+    claim: "no injection, authz, or insecure-config findings"
+    tool: semgrep
+    license: "LGPL-2.1 CLI (free, commercial use OK - not linked into your product)"
+    command: semgrep scan --config p/csharp --config p/security-audit --sarif --output {EVIDENCE_DIR}/semgrep.sarif
+    parser: sarif
+    evidence: "{EVIDENCE_DIR}/semgrep.sarif"
+    threshold: error == 0
+    blocking: true
+    installHint: "pip install semgrep  |  brew install semgrep"
+    docs: https://semgrep.dev/docs/
+    rationale: >
+      Semgrep OSS rather than CodeQL: CodeQL is free only for open source, and
+      commercial closed-source use requires paid GitHub Advanced Security.
+
+  - id: api-contract
+    tier: L2
+    lane: inner
+    claim: "no unintended breaking change to the public API surface"
+    tool: public-api-analyzers
+    license: "MIT (free, commercial use OK)"
+    command: dotnet build --nologo -v:n
+    parser: msbuild
+    threshold: errors == 0
+    blocking: true
+    installHint: "add Microsoft.CodeAnalysis.PublicApiAnalyzers plus PublicAPI.Shipped.txt / PublicAPI.Unshipped.txt"
+    docs: https://github.com/dotnet/roslyn-analyzers/blob/main/src/PublicApiAnalyzers/PublicApiAnalyzers.Help.md
+    rationale: >
+      Essential where the deliverable is a library. RS0016/RS0017 turn an
+      accidental signature change into a build error rather than a customer
+      support ticket.
+
+  - id: load-smoke
+    tier: L3
+    lane: outer
+    claim: "changed endpoints stay within the latency budget"
+    tool: k6
+    license: >
+      AGPL-3.0. Free and lawful to use as a standalone load-testing executable -
+      running it imposes no obligation on your application source. If your legal
+      policy bars AGPL tooling outright, substitute wrk (Apache-2.0) or
+      BenchmarkDotNet (MIT) for in-process benchmarks.
+    command: k6 run --summary-export {EVIDENCE_DIR}/k6.json perf/smoke.js
+    parser: jsonpath
+    evidence: "{EVIDENCE_DIR}/k6.json"
+    parserArgs:
+      paths:
+        p95: metrics.http_req_duration.p(95)
+        errorRate: metrics.http_req_failed.value
+    threshold: p95 <= 500 and errorRate <= 0.01
+    blocking: false
+    installHint: "brew install k6  |  https://k6.io/docs/get-started/installation/"
+    docs: https://k6.io/docs/
+    rationale: "Latency is measurable. Do not let an agent assert performance."

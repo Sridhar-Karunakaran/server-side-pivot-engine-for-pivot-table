@@ -1,0 +1,457 @@
+id: syncfusion
+name: Syncfusion product development
+kind: overlay
+
+# An overlay composes onto ANY profile. It adds gates, knowledge, skills, risk
+# paths and conventions without forking the profile - so the same overlay works
+# for Angular, React, Blazor, MAUI and WinForms teams.
+
+detect:
+  # Any one of these means the overlay applies. Detection is on dependency NAMES,
+  # so harness.py's fingerprint picks up a newly added Syncfusion package and
+  # doctor tells the user to re-run generation.
+  anyOf:
+    - kind: packageRef
+      valuePrefix: "Syncfusion."
+    - kind: packageRef
+      valuePrefix: "@syncfusion/"
+    - kind: fileContains
+      value: "**/*.{cs,ts,js,razor}::SyncfusionLicenseProvider\\.RegisterLicense|registerLicense\\("
+
+# ---------------------------------------------------------------------------
+# Product mapping: detected package -> which knowledge and gates to install.
+# ---------------------------------------------------------------------------
+products:
+  # Slugs are Syncfusion's own, from https://ai.syncfusion.com/llms.txt
+  # (retrieved 2026-09-01). `slug` drives the skill pack, the MCP package and the
+  # platform index URL; `profileHint` maps to this harness's internal profile id.
+  # Detect from the MANIFEST, never from what the user said - Syncfusion's rule,
+  # and the right one for monorepos.
+  - id: react
+    slug: react
+    match: "@syncfusion/ej2-react-"
+    profileHint: js-react
+    pack: syncfusion/react-ui-components-skills
+    mcp: "@syncfusion/react-mcp"
+    catalogSection: "Syncfusion React (EJ2) specifics"
+  - id: angular
+    slug: angular
+    match: "@syncfusion/ej2-angular-"
+    profileHint: js-angular
+    pack: syncfusion/angular-ui-components-skills
+    mcp: "@syncfusion/angular-mcp"
+    catalogSection: "Syncfusion Angular (EJ2) specifics"
+  - id: vue
+    slug: vue
+    match: "@syncfusion/ej2-vue-"
+    profileHint: js-common
+    pack: syncfusion/vue-ui-components-skills
+    mcp: "@syncfusion/vue-mcp"
+  - id: javascript
+    slug: javascript
+    match: "@syncfusion/ej2-"
+    profileHint: js-common
+    pack: syncfusion/javascript-ui-components-skills
+    mcp: "@syncfusion/javascript-mcp"
+  - id: blazor
+    slug: blazor
+    match: "Syncfusion.Blazor"
+    profileHint: dotnet-blazor
+    pack: syncfusion/blazor-ui-components-skills
+    mcp: Syncfusion.Blazor.MCP
+    catalogSection: "Syncfusion Blazor specifics"
+    extraGates: [syncfusion-blazor-setup]
+  - id: aspnet-core
+    slug: aspnet-core
+    match: "Syncfusion.EJ2.AspNet.Core"
+    profileHint: dotnet-aspnetcore
+    pack: syncfusion/aspnetcore-ui-components-skills
+    mcp: Syncfusion.AspNetCore.MCP
+  - id: aspnet-mvc
+    slug: aspnet-mvc
+    match: "Syncfusion.EJ2.MVC"
+    profileHint: dotnet-aspnetcore
+    pack: syncfusion/aspnetmvc-ui-components-skills
+    mcp: Syncfusion.AspNetMvc.MCP
+  - id: maui
+    slug: maui
+    match: "Syncfusion.Maui."
+    profileHint: dotnet-maui
+    pack: syncfusion/maui-ui-components-skills
+    mcp: Syncfusion.Maui.MCP
+    catalogSection: "MAUI"
+  - id: maui-toolkit
+    slug: maui-toolkit
+    match: "Syncfusion.Maui.Toolkit"
+    profileHint: dotnet-maui
+    pack: syncfusion/maui-toolkit-skills
+    mcp: Syncfusion.Maui.MCP
+  - id: winforms
+    slug: winforms
+    match: "Syncfusion.SfDataGrid.WinForms|Syncfusion.Tools.Windows|Syncfusion.Grid.Windows"
+    profileHint: dotnet-winforms
+    pack: syncfusion/winforms-ui-components-skills
+    mcp: Syncfusion.WinForms.MCP
+    catalogSection: "WinForms"
+  - id: wpf
+    slug: wpf
+    match: "Syncfusion.SfGrid.WPF|Syncfusion.Tools.WPF|Syncfusion.Shared.WPF"
+    profileHint: dotnet-winforms
+    pack: syncfusion/wpf-ui-components-skills
+    mcp: Syncfusion.WPF.MCP
+    catalogSection: "WPF"
+  - id: winui
+    slug: winui
+    match: "Syncfusion.Grid.WinUI|Syncfusion.Core.WinUI"
+    pack: syncfusion/winui-ui-components-skills
+    mcp: Syncfusion.WinUI.MCP
+    note: "no harness profile yet; falls back to dotnet-common"
+  - id: flutter
+    slug: flutter
+    match: "syncfusion_flutter_"
+    pack: syncfusion/flutter-ui-components-skills
+    note: "no harness profile yet; Dart/Flutter gates are not implemented"
+  - id: document-sdk
+    slug: document-sdk
+    match: "Syncfusion.DocIO|Syncfusion.XlsIO|Syncfusion.Pdf|Syncfusion.Presentation"
+    pack: syncfusion/document-sdk-skills
+    mcp: Syncfusion.DocumentSdk.MCP
+    catalogSection: "Document libraries"
+    extraGates: [document-resource-disposal, document-memory]
+
+# ---------------------------------------------------------------------------
+# Skills. Syncfusion publishes an official agent-onboarding system at
+# ai.syncfusion.com: an onboarding skill plus 775 component skills across 18
+# platforms. This REPLACES the earlier generate-from-docs fallback - real
+# installed skills are rank-2 knowledge, a hand-written summary is rank-3.
+#
+# Their first rule is "Do not write Syncfusion code from memory", which is the
+# same principle this harness enforces everywhere else.
+#   Source: https://ai.syncfusion.com/agent-setup/prompt.md (retrieved 2026-09-01)
+# Full flow: references/syncfusion-onboarding.md
+# ---------------------------------------------------------------------------
+onboarding:
+  required: true
+  skill: syncfusion/agent-onboarding-skill
+  install: "npx skills add syncfusion/agent-onboarding-skill --agent {agent} -y"
+  idempotent: true
+  checkFirst: "skip if already present in the agent's skills directory"
+  canonicalIndex: https://ai.syncfusion.com/llms.txt
+  platformIndex: "https://ai.syncfusion.com/{slug}/llms.txt"
+  inventory: "https://ai.syncfusion.com/{slug}/inventory.txt"
+  licensing: https://ai.syncfusion.com/licensing.md
+  installDirs:
+    claude-code: ".claude/skills/"
+    windsurf: "vendor-specific"
+    code-studio: "vendor-specific"
+    default: ".agents/skills/"
+  agents: [claude-code, codex, cursor, windsurf, copilot, gemini, cline, code-studio, jetbrains]
+
+componentSkills:
+  # Syncfusion: "Do not load every skill or reference into context" and "Install
+  # narrow skills, not full packs, when possible." The Blazor pack alone is 72
+  # skills - context the build agent pays for on every delegation.
+  strategy: narrow
+  detector: ./scripts/detect-syncfusion-components.sh
+  install: "npx skills add {pack} --skill {skill_name} --agent {agent} -y"
+  validateAgainstInventory: true
+  rationale: >
+    The detector greps the repo for components actually in use, then resolves each
+    candidate against the platform inventory's skill_name column. Resolution is
+    not optional: constructed names are wrong often enough to matter - SfChart
+    resolves to `charts` (plural), SfSchedule to `scheduler` (different word), and
+    an ExcelEngine usage to `syncfusion-dotnet-excel`, not
+    `syncfusion-document-sdk-excel`. A candidate with no inventory match is
+    reported, never installed on a guess.
+  reInstallWhen: "harness.py doctor reports a fingerprint change (new components added)"
+
+# ---------------------------------------------------------------------------
+# Knowledge sources. Official Syncfusion documentation only - never model recall
+# about component APIs, which change every release.
+# ---------------------------------------------------------------------------
+knowledgeSets:
+  ej2-angular:
+    - id: ej2-ng-getting-started
+      url: https://ej2.syncfusion.com/angular/documentation/introduction
+      topics: [setup, modules, licensing]
+      required: true
+    - id: ej2-ng-grid
+      url: https://ej2.syncfusion.com/angular/documentation/grid/getting-started
+      topics: [grid, data-binding, virtualization]
+      required: true
+    - id: ej2-datamanager
+      url: https://ej2.syncfusion.com/angular/documentation/data/getting-started
+      topics: [DataManager, server-paging, adaptors]
+      required: true
+  ej2-react:
+    - id: ej2-react-getting-started
+      url: https://ej2.syncfusion.com/react/documentation/introduction
+      topics: [setup, licensing]
+      required: true
+    - id: ej2-react-grid
+      url: https://ej2.syncfusion.com/react/documentation/grid/getting-started
+      topics: [grid, data-binding]
+      required: true
+  ej2-vue:
+    - id: ej2-vue-getting-started
+      url: https://ej2.syncfusion.com/vue/documentation/introduction
+      topics: [setup, licensing]
+      required: true
+  ej2-js:
+    - id: ej2-js-getting-started
+      url: https://ej2.syncfusion.com/javascript/documentation/introduction
+      topics: [setup, licensing]
+      required: true
+  blazor-components:
+    - id: blazor-sf-getting-started
+      url: https://blazor.syncfusion.com/documentation/introduction
+      topics: [setup, AddSyncfusionBlazor, licensing]
+      required: true
+    - id: blazor-sf-grid
+      url: https://blazor.syncfusion.com/documentation/datagrid/getting-started
+      topics: [grid, virtualization, data-binding]
+      required: true
+    - id: blazor-sf-datamanager
+      url: https://blazor.syncfusion.com/documentation/data/getting-started
+      topics: [SfDataManager, server-paging]
+      required: true
+  maui-controls:
+    - id: maui-sf-getting-started
+      url: https://help.syncfusion.com/maui/introduction/overview
+      topics: [setup, ConfigureSyncfusionCore, licensing]
+      required: true
+    - id: maui-sf-datagrid
+      url: https://help.syncfusion.com/maui/datagrid/getting-started
+      topics: [datagrid, data-binding]
+      required: true
+  winforms-controls:
+    - id: winforms-sf-getting-started
+      url: https://help.syncfusion.com/windowsforms/overview
+      topics: [setup, licensing, disposal]
+      required: true
+  wpf-controls:
+    - id: wpf-sf-getting-started
+      url: https://help.syncfusion.com/wpf/welcome-to-syncfusion-essential-wpf
+      topics: [setup, licensing]
+      required: true
+  ej2-aspnetcore:
+    - id: ej2-core-getting-started
+      url: https://ej2.syncfusion.com/aspnetcore/documentation/introduction
+      topics: [setup, tag-helpers, licensing]
+      required: true
+  file-formats:
+    - id: docio
+      url: https://help.syncfusion.com/document-processing/word/word-library/net/getting-started
+      topics: [DocIO, streaming, disposal]
+      required: true
+    - id: xlsio
+      url: https://help.syncfusion.com/document-processing/excel/excel-library/net/getting-started
+      topics: [XlsIO, large-workbooks, disposal]
+      required: true
+    - id: pdf
+      url: https://help.syncfusion.com/document-processing/pdf/pdf-library/net/getting-started
+      topics: [PDF, streaming, disposal]
+      required: true
+  licensing:
+    - id: license-registration
+      url: https://help.syncfusion.com/common/essential-studio/licensing/licensing-faq
+      topics: [licensing, RegisterLicense, key-management]
+      required: true
+
+# ---------------------------------------------------------------------------
+# Gates the overlay adds. These are Syncfusion-specific facts a tool can check.
+# ---------------------------------------------------------------------------
+gates:
+  - id: syncfusion-license
+    tier: L0
+    lane: inner
+    claim: "the Syncfusion license is registered before first control use, and the key is not in source"
+    tool: harness-script
+    license: "n/a (generated script)"
+    command: ./scripts/check-syncfusion-license.sh
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    installHint: "generated by harness-creator into scripts/"
+    docs: https://help.syncfusion.com/common/essential-studio/licensing/licensing-faq
+    rationale: >
+      Two failures this catches, both of which reach customers. (1) Registration
+      missing or too late, so a trial banner renders in production - an agent
+      scaffolding a new project omits it constantly. (2) The key committed to
+      source. The script asserts a RegisterLicense/registerLicense call exists on
+      the startup path AND that its argument is read from configuration or an
+      environment variable rather than being a literal.
+
+  - id: syncfusion-version-consistency
+    tier: L0
+    lane: inner
+    claim: "all Syncfusion packages are on one consistent version"
+    tool: harness-script
+    license: "n/a (generated script)"
+    command: ./scripts/check-syncfusion-versions.sh
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    docs: https://help.syncfusion.com/common/essential-studio/upgrade/how-to-upgrade
+    rationale: >
+      Syncfusion packages share internal assemblies and are only supported in
+      matched sets. Mixed versions produce MissingMethodException and rendering
+      faults that look like application bugs and cost days to diagnose. This is a
+      pure lock-file fact, so it is a gate, not a review item.
+
+  - id: syncfusion-banner-suppression
+    tier: L0
+    lane: inner
+    claim: "no code suppresses, hides, or CSS-hides a Syncfusion licensing banner"
+    tool: harness-script
+    license: "n/a (generated script)"
+    command: ./scripts/check-syncfusion-banner.sh
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    docs: https://ai.syncfusion.com/licensing.md
+    rationale: >
+      Syncfusion's mandatory rule: "Never suppress, hide, catch or CSS-hide a
+      licensing banner or warning." An agent asked to remove a trial banner will
+      reach for display:none or a swallowed exception, which converts a licensing
+      problem into a silent compliance breach that ships. Machine-detectable, so
+      it is a gate rather than a review item.
+
+  - id: syncfusion-blazor-setup
+    tier: L0
+    lane: inner
+    appliesTo: [blazor]
+    claim: "Blazor Syncfusion setup is complete: registration, AddSyncfusionBlazor, theme"
+    tool: harness-script
+    license: "n/a (generated script)"
+    command: ./scripts/check-syncfusion-blazor-setup.sh
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    docs: https://ai.syncfusion.com/blazor/llms.txt
+    rationale: >
+      Three requirements that produce silent failure rather than an error, per
+      Syncfusion's Blazor index: AddSyncfusionBlazor() missing means components
+      render EMPTY with no exception; a missing Syncfusion.Blazor.Themes
+      stylesheet means unstyled output; and in .NET 8+ Web Apps interactive
+      components need an explicit render mode or events silently do nothing. An
+      agent scaffolding a page routinely omits all three, and nothing in a normal
+      build or unit test catches it.
+
+  - id: document-resource-disposal
+    tier: L0
+    lane: inner
+    appliesTo: [documents]
+    claim: "document-library objects are disposed"
+    tool: dotnet-analyzers
+    license: "MIT (free, commercial use OK)"
+    command: dotnet build --nologo -v:n /p:EnforceCodeStyleInBuild=true
+    parser: msbuild
+    threshold: errors == 0
+    blocking: true
+    docs: https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/ca2000
+    rationale: >
+      CA2000 at error severity is the single most valuable setting for the
+      document teams. WordDocument, ExcelEngine, PdfDocument and PresentationImpl
+      hold large unmanaged buffers; an undisposed one in a server-side generation
+      path exhausts memory under load. Machine-detectable, so never a review item.
+
+  - id: document-memory
+    tier: L3
+    lane: outer
+    appliesTo: [documents]
+    claim: "document generation memory is bounded across repeated runs"
+    tool: dotnet-gcdump
+    license: "MIT (free, commercial use OK)"
+    command: ./scripts/leak-probe.sh {EVIDENCE_DIR}
+    parser: gcdump-delta
+    parserArgs:
+      baseline: heap-baseline.json
+      current: heap-after.json
+      field: heapBytes
+    threshold: growthRatio <= 1.10
+    blocking: true
+    installHint: "dotnet tool install -g dotnet-gcdump"
+    docs: https://learn.microsoft.com/dotnet/core/diagnostics/dotnet-gcdump
+    rationale: >
+      Document generation is the classic memory-leak surface in a SaaS backend:
+      it works in a unit test and exhausts a container after a thousand requests.
+      Only a profiler can tell you which.
+
+# ---------------------------------------------------------------------------
+# Risk paths requiring human approval regardless of gate status.
+# ---------------------------------------------------------------------------
+risk:
+  requiresHumanApproval:
+    - "**/*.csproj"
+    - "**/package.json"
+    - "**/Directory.Packages.props"
+    - "**/PublicAPI.Shipped.txt"
+    - "**/Migrations/**"
+    - "**/*Licens*"
+    - "**/appsettings*.json"
+  rationale: >
+    Package manifests are risk-gated because a Syncfusion version bump is never
+    a local change: it must move in lockstep across the solution. PublicAPI files
+    are risk-gated because the deliverable is a component library, so a signature
+    change is a customer-facing breaking change.
+
+conventions:
+  - id: license-from-config
+    rule: >
+      The Syncfusion license key is read from configuration or an environment
+      variable. It never appears as a literal in source, and never in a
+      WebAssembly or client-side project where it would ship to the browser.
+    enforcedBy: syncfusion-license
+  - id: server-side-data
+    rule: >
+      Grid, TreeGrid, Scheduler and Chart bind through DataManager / SfDataManager
+      with server-side paging, sorting and filtering for any collection that can
+      exceed a page. Never bind an unbounded in-memory collection.
+    enforcedBy: manual
+  - id: explicit-module-imports
+    rule: >
+      Import the specific EJ2 module, never the package barrel. Barrel imports
+      pull the whole control library into the bundle.
+    enforcedBy: bundle-budget
+  - id: dispose-controls
+    rule: >
+      Programmatically created EJ2 or .NET controls are destroyed/disposed by
+      whoever created them. Framework teardown does not cover manual instantiation.
+    enforcedBy: leak-web
+  - id: matched-versions
+    rule: All Syncfusion packages move together, on one version, across the solution.
+    enforcedBy: syncfusion-version-consistency
+
+# ---------------------------------------------------------------------------
+# MCP. Complementary to skills, not an alternative: skills work anonymously,
+# MCP confirms current APIs and recent features and needs an API key.
+#   Source: https://ai.syncfusion.com/mcp/claude-code.md (retrieved 2026-09-01)
+# ---------------------------------------------------------------------------
+mcp:
+  - id: syncfusion-platform-mcp
+    package: "per product above (npm: @syncfusion/<slug>-mcp | NuGet: Syncfusion.<Platform>.MCP)"
+    why: "version-correct component API lookup instead of model recall"
+    optional: true
+    keyEnv: Syncfusion_API_Key_Path
+    keyEnvAlternate: Syncfusion_API_Key
+    keyPath: "~/.syncfusion/api-key.txt"
+    obtainKey: https://www.syncfusion.com/account/api-key
+    claudeCodeInstall: >
+      claude mcp add sf-{slug}-mcp
+      --env Syncfusion_API_Key_Path=$HOME/.syncfusion/api-key.txt
+      -- npx -y @syncfusion/{slug}-mcp@latest
+    claudeCodeInstallDotnet: >
+      claude mcp add sf-{slug}-mcp
+      --env Syncfusion_API_Key_Path=$HOME/.syncfusion/api-key.txt
+      -- dnx Syncfusion.{Platform}.MCP --yes
+    notes:
+      - "Env var casing is exact. SYNCFUSION_API_KEY (all caps) is INVALID."
+      - "An MCP API key is NOT a product license key. Both are required."
+      - "Use the path form, never an inline key. The harness writes config referencing the path, verifies the file exists, and never writes the key itself."
+      - "On .NET 8/9 substitute dnx with: dotnet tool run syncfusion-{slug}-mcp"
+      - "If no key file exists, record MCP as configured-but-unauthenticated and say so. Never claim the server is live when it is not."
+
+  - id: syncfusion-kpis
+    why: "internal Bold BI / KPI data; useful for SaaS product work, not code generation"
+    optional: true

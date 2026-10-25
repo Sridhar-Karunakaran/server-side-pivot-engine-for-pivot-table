@@ -1,0 +1,239 @@
+harnessVersion: "1.0"
+profile: dotnet-aspnetcore
+overlays: [syncfusion]
+tier: L0
+
+# Syncfusion Pivot Data Server — verification contract
+# Stack detected: ASP.NET Core net10.0 (Microsoft.NET.Sdk.Web) + Syncfusion.Pivot.Engine 35.1.41
+# OpenSpec change governing this repo's work: openspec/changes/admin-panel-integration (D1–D6)
+# Tier L0: no test project exists on arrival. The first tasks (see tasks seeded in
+# .agent/tasks) establish the build gate and characterization tests for the D1–D6 work.
+
+loop:
+  maxActive: 1
+  maxVerifying: 3
+  reviewBlocksPick: true
+  requireEvidenceForDone: true
+  verifyRetryLimit: 3
+
+lanes:
+  inner: { budgetSeconds: 120 }
+  outer: { budgetSeconds: 10800 }
+
+gates:
+  # ---- inner lane: fast, deterministic, run per task ----
+  - id: build
+    tier: L0
+    lane: inner
+    claim: "the server compiles with zero warnings promoted to errors"
+    tool: dotnet
+    license: "MIT (free, commercial use OK)"
+    command: dotnet build PivotController/PivotController.csproj -c Release --nologo
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    timeoutSeconds: 300
+    docs: https://learn.microsoft.com/dotnet/core/tools/dotnet-build
+    rationale: >
+      L0 floor: nothing else is verifiable until the project builds deterministically.
+      Characterization and the D1–D6 gates all hang off this.
+
+  - id: openspec-validate
+    tier: L0
+    lane: inner
+    claim: "openspec planning artifacts for the active change are complete and well-formed"
+    tool: openspec
+    license: "MIT (free, commercial use OK)"
+    command: bash -lc 'export PATH="$HOME/.local-tools/node_modules/.bin:$PATH"; cd "$REPO" && openspec status --change admin-panel-integration && openspec validate admin-panel-integration'
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    timeoutSeconds: 60
+    docs: https://github.com/Fission-AI/OpenSpec
+    rationale: >
+      This repo's own config.yaml requires the bugfix-feature schema artifacts
+      (EXPLORATION/proposal/design/tasks + one delta spec per capability) before
+      implementation. The D1–D6 specs are the contract the implementation is
+      tested against, so their completeness is itself a gate.
+
+  - id: no-secrets
+    tier: L0
+    lane: inner
+    claim: "no plaintext credentials are introduced anywhere in the diff"
+    tool: gitleaks
+    license: "MIT (free, commercial use OK)"
+    command: bash -lc 'if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source "$REPO" --no-banner --redact -v; else grep -rnE "(Password|Pwd|password)[[:space:]]*[:=][[:space:]][^[:space:]]{4,}" --include="*.json" --include="*.cs" --include="*.md" "$REPO/PivotController" "$REPO/openspec" | grep -viE "redacted|placeholder|example|REDACTED" > "{EVIDENCE_DIR}/grep-secrets.txt"; test ! -s "{EVIDENCE_DIR}/grep-secrets.txt"; fi'
+    parser: exitcode
+    evidence: "{EVIDENCE_DIR}/grep-secrets.txt"
+    threshold: exit == 0
+    blocking: true
+    timeoutSeconds: 120
+    installHint: "install gitleaks (or the fallback grep runs, still evidence-gated)"
+    docs: https://github.com/gitleaks/gitleaks
+    rationale: >
+      Spec D6 (credential-hygiene) is a normative requirement of this change:
+      the shipped appsettings.json carries a plaintext test credential that
+      must never spread; no new file may repeat it. A secrets scan in the inner
+      lane is the cheapest deterministic enforcement.
+
+  - id: syncfusion-license
+    tier: L0
+    lane: inner
+    claim: "Syncfusion packages are licensed at runtime; no hardcoded key in source"
+    tool: dotnet
+    license: "MIT (free, commercial use OK)"
+    command: bash -lc 'grep -rniE "RegisterLicense\\\\s*\\\\(" "$REPO/PivotController" --include="*.cs" | grep -viE "config|env" > "{EVIDENCE_DIR}/license-check.txt" || true; exit 0'
+    parser: exitcode
+    evidence: "{EVIDENCE_DIR}/license-check.txt"
+    threshold: exit == 0
+    blocking: false
+    timeoutSeconds: 30
+    docs: https://ai.syncfusion.com/licensing.md
+    rationale: >
+      Backend uses Syncfusion.Pivot.Engine. Detect (not enforce) license call
+      placement now; blocking goes on only when a key literal is found in source
+      (Syncfusion rule: keys come from config/env, never source). The companion
+      MAUI repo gates this harder; here it stays advisory until the panel work
+      needs it.
+
+  # ---- outer lane: slower, verified live ----
+  - id: https-live
+    tier: L0
+    lane: outer
+    claim: "the HTTPS/TLS behavior verified live (33 checks) still passes"
+    tool: verify-https.sh
+    license: "repo-owned (free)"
+    command: bash PivotController/verify-https.sh
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    timeoutSeconds: 900
+    docs: https://github.com/Sridhar-Karunakaran/server-side-pivot-engine-for-pivot-table
+    rationale: >
+      Existing repo asset: the Phase-1 HTTPS work was verified live with this
+      script (PFX / PEM fullchain / store thumbprint+subjectName, TLS1.2+,
+      HTTP/1+2). It is the characterization suite for exactly the D1 https
+      surface the panel touches. Outer lane: needs a running server + certs.
+
+  - id: cache-live
+    tier: L0
+    lane: outer
+    claim: "cache semantics (per-index LRU, keep-on-refresh) verified live still passes"
+    tool: verify-cache.sh
+    license: "repo-owned (free)"
+    command: bash PivotController/verify-cache.sh
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    timeoutSeconds: 900
+    docs: https://github.com/Sridhar-Karunakaran/server-side-pivot-engine-for-pivot-table
+    rationale: >
+      Characterization for the cache contract the panel configures
+      (CacheSizeLimit/KeepDataOnRefresh). Outer lane for the same reason as
+      https-live. Both scripts are already in-repo and were used to verify
+      Phase 1 live — they are the oracle for the D1 deltas.
+
+  - id: db-query-timeout-live
+    tier: L0
+    lane: outer
+    claim: "the Database Query timeout enforcement (verified live in Phase 1) still passes"
+    tool: verify-dbtimeout.sh
+    license: "repo-owned (free)"
+    command: bash -lc '[ -x "$REPO/PivotController/verify-dbtimeout.sh" ] && bash "$REPO/PivotController/verify-dbtimeout.sh" || { echo "verify-dbtimeout.sh not present; see EXPLORATION.md notes" > "{EVIDENCE_DIR}/dbtimeout-skip.txt"; exit 0; }'
+    parser: exitcode
+    threshold: exit == 0
+    blocking: false
+    timeoutSeconds: 900
+    docs: https://github.com/Sridhar-Karunakaran/server-side-pivot-engine-for-pivot-table
+    rationale: >
+      Phase 1 verified command-timeout enforcement live (pg_sleep canceled at
+      2s/3s, TimeoutException wrapped, 502 surface, commandTimeLimit<0 → 422).
+      If the script is not yet extracted into the repo, gate reports skip with
+      a reason (not-run-is-not-pass is handled by the non-blocking flag), and
+      extracting it becomes a seeded task.
+
+risk:
+  requiresHumanApproval:
+    - "**/Security/**"
+    - "**/appsettings*.json"
+    - "**/DataServer/*.json"
+    - "**/*.csproj"
+    - "**/Controllers/**"
+
+skills:
+  - id: build
+    claim: "the project compiles"
+    command: dotnet build PivotController/PivotController.csproj -c Release --nologo
+    usedBy: [implementer, release-manager, api-steward]
+  - id: unit-test
+    claim: "the suite runs (once a test project exists)"
+    command: dotnet test PivotController --nologo
+    usedBy: [implementer, test-engineer]
+  - id: test-one
+    claim: "a single named test runs — the tight inner loop"
+    command: dotnet test PivotController --nologo --filter "{NAME}"
+    usedBy: [implementer, test-engineer]
+  - id: lint
+    claim: "static analysis runs via Roslyn analyzers (Directory.Build.props)"
+    command: dotnet build PivotController/PivotController.csproj -c Release --nologo
+    usedBy: [implementer]
+  - id: knowledge-lookup
+    claim: "retrieve a cited rule from .agent/knowledge/"
+    command: grep -ri "{TOPIC}" .agent/knowledge/
+    usedBy: [implementer, code-reviewer, security-auditor, spec-writer, reviewer]
+  - id: arch-map
+    claim: "regenerate the dependency graph"
+    command: dotnet list PivotController/PivotController.csproj reference
+    usedBy: [task-planner, code-reviewer]
+  - id: hotspots
+    claim: "list high-churn files from git history"
+    command: git log --format= --name-only --since="12 months ago" | grep -v "^$" | sort | uniq -c | sort -rn | head -20
+    usedBy: [code-reviewer, task-planner]
+  - id: quality-gate
+    claim: "run the whole inner lane"
+    command: python3 .agent/tools/harness.py gate run --lane inner --scope diff
+    usedBy: [implementer]
+  - id: full-gate
+    claim: "run every gate at full scope"
+    command: python3 .agent/tools/harness.py gate run --lane outer --scope full
+    usedBy: [release-manager]
+  - id: harness-verify
+    claim: "control plane matches HARNESS-LOCK.json"
+    command: python3 .agent/tools/harness.py verify
+    usedBy: [implementer, code-reviewer, security-auditor, reviewer]
+  - id: api-baseline
+    claim: "public API surface is listed for additive-only diffing"
+    command: dotnet build PivotController/PivotController.csproj -c Release --nologo -p:ProduceReferenceAssembly=true
+    usedBy: [api-steward]
+  - id: docs-check
+    claim: "markdown links and fences are well-formed"
+    command: python3 -c "import sys,glob; [print(f) for f in glob.glob('**/*.md', recursive=True)]"
+    usedBy: [docs-writer]
+  - id: artifact-inspect
+    claim: "the built binary inventory is listed"
+    command: ls -la PivotController/bin/Release/
+    usedBy: [release-manager]
+  - id: sast
+    claim: "no insecure patterns in the diff (grep-based Roslyn-adjacent scan)"
+    command: bash -lc 'grep -rnE "(eval|exec)\(|Process\.Start|md5|sha1|DES|Random\b" PivotController --include="*.cs" || true'
+    usedBy: [security-auditor]
+  - id: secret-scan
+    claim: "no committed secrets (gitleaks or grep fallback)"
+    command: bash -lc 'if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . --no-banner --redact -v; else grep -rnE "(Password|Pwd|password)[[:space:]]*[:=][[:space:]][^[:space:]]{4,}" --include="*.json" --include="*.cs" --include="*.md" PivotController openspec | grep -viE "redacted|placeholder|example|REDACTED" || true; fi'
+    usedBy: [security-auditor]
+  - id: deps-audit
+    claim: "no known-vulnerable dependencies (dotnet list package --vulnerable)"
+    command: dotnet list PivotController/PivotController.csproj package --vulnerable --include-transitive
+    usedBy: [security-auditor]
+  - id: coverage
+    claim: "coverage is measured once a test project exists"
+    command: dotnet test PivotController --nologo --collect:"XPlat Code Coverage"
+    usedBy: [test-engineer]
+
+flaky:
+  quarantine: []
+  retries: 2
+  expiresAfterDays: 30
+
+# Evidence lives in .agent/evidence/<TASK>/ and is gitignored; the rest of
+# .agent/ is committed so CI can validate this same contract.

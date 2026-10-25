@@ -1,0 +1,87 @@
+# Project Context — {{PROJECT_NAME}}
+
+<!-- Injected into every BUILD and REVIEW prompt. Keep under ~150 lines: this is
+     paid for on every delegation. Generated sections are marked; regenerating the
+     harness refreshes those and preserves everything you write by hand. -->
+
+**Stack**: {{STACK}}
+**Profile**: {{PROFILE}}{{OVERLAY_LINE}}
+**Tier**: {{TIER}} — {{TIER_MEANING}}
+
+## Architecture
+
+<!-- GENERATED from {{ARCH_TOOL}} — a real dependency graph, not an inference. -->
+
+{{ARCHITECTURE_MAP}}
+
+### Where things go
+
+{{PLACEMENT_RULES}}
+
+### Change hotspots
+
+<!-- GENERATED from git history. Defects concentrate here; weight review accordingly. -->
+
+{{HOTSPOTS}}
+
+## Conventions
+
+<!-- Rank 1 conventions (machine-enforced) are listed with the rule that enforces
+     them, so nobody has to remember them. Rank 3 (prose only) are the residue —
+     each one is a candidate for conversion into a rule. -->
+
+### Enforced by tooling
+
+{{ENFORCED_CONVENTIONS}}
+
+### Not yet enforced
+
+{{PROSE_CONVENTIONS}}
+
+## Boundaries
+
+**Never modify:**
+
+{{BOUNDARIES}}
+
+**Requires human approval** (`task.py done` halts on these):
+
+{{RISK_PATHS}}
+
+## Verification
+
+Do not run these ad hoc — `harness.py` runs them and records evidence.
+
+### Inner lane (after every subtask, budget {{INNER_BUDGET}}s)
+
+{{INNER_GATES}}
+
+### Outer lane (once per task{{OUTER_MODE_NOTE}})
+
+{{OUTER_GATES}}
+
+```bash
+python3 .agent/tools/harness.py gate run --lane inner --scope diff
+python3 .agent/tools/harness.py gate list          # full detail incl. thresholds
+```
+
+## Knowledge
+
+Cited sources in `.agent/knowledge/`. **Consult these rather than recalling
+framework behaviour** — they are pinned to the versions this project uses.
+
+{{KNOWLEDGE_LIST}}
+
+{{SKILL_SLOTS}}
+
+## Testing approach
+
+{{TESTING_APPROACH}}
+
+## Known debt
+
+<!-- Hand-maintained. Baselined analyzer warnings, quarantined flaky tests,
+     modules exempted from a gate — each with a reason and an owner. Anything
+     here is a future task, not a permanent exception. -->
+
+{{DEBT}}

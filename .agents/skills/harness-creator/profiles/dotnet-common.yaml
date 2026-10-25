@@ -1,0 +1,236 @@
+id: dotnet-common
+name: .NET (shared base)
+catalog: catalogs/defects-aspnetcore.md
+
+detect:
+  requires:
+    - glob: "**/*.csproj"
+  signals:
+    - kind: glob
+      value: "**/*.sln"
+      weight: 3
+
+runtime:
+  buildCommand: dotnet build
+  testCommand: dotnet test
+  formatCommand: dotnet format
+  generates:
+    - Directory.Build.props
+    - .editorconfig
+
+knowledge:
+  - id: dotnet-code-analysis
+    url: https://learn.microsoft.com/dotnet/fundamentals/code-analysis/overview
+    topics: [analyzers, rule-ids, severity]
+    required: true
+  - id: dotnet-ca-rules
+    url: https://learn.microsoft.com/dotnet/fundamentals/code-analysis/quality-rules/
+    topics: [CA-rules]
+    required: true
+  - id: dotnet-diagnostics
+    url: https://learn.microsoft.com/dotnet/core/diagnostics/
+    topics: [memory, gcdump, counters, leaks]
+    required: true
+  - id: dotnet-async-guidance
+    url: https://github.com/davidfowl/AspNetCoreDiagnosticScenarios/blob/master/AsyncGuidance.md
+    topics: [async, deadlock, threadpool]
+    required: false
+
+gates:
+  - id: harness-verify
+    tier: L0
+    lane: inner
+    claim: "the control plane matches HARNESS-LOCK.json and every cross-reference resolves"
+    tool: harness
+    license: "n/a (generated)"
+    command: python3 .agent/tools/harness.py verify
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    docs: references/control-plane.md
+    rationale: >
+      Without this gate the control plane is advisory. Thresholds are protected by the
+      ratchet floor, but a policy, workflow or agent definition is just a markdown file
+      an agent can edit - and relaxing a policy is cheaper than satisfying it. This
+      hashes every control-plane file and fails the build on any unreviewed change,
+      dangling cross-reference, orphan, or unroutable task type.
+  - id: build
+    tier: L0
+    lane: inner
+    claim: "the solution compiles with no errors"
+    tool: dotnet
+    license: "MIT (free, commercial use OK)"
+    command: dotnet build --nologo -v:q
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    installHint: "install the .NET SDK: https://dotnet.microsoft.com/download"
+    docs: https://learn.microsoft.com/dotnet/core/tools/dotnet-build
+    rationale: "Baseline. Nothing downstream means anything if this fails."
+
+  - id: analyzers
+    tier: L0
+    lane: inner
+    claim: "no Roslyn analyzer violations at or above warning"
+    tool: dotnet-analyzers
+    license: "MIT in-SDK; StyleCop MIT; SonarAnalyzer LGPL-3.0; Roslynator Apache-2.0"
+    command: dotnet build --nologo -v:n /p:EnforceCodeStyleInBuild=true
+    parser: msbuild
+    threshold: errors == 0 and warnings <= 0
+    blocking: true
+    ratchet: true
+    installHint: "in the SDK; the harness generates Directory.Build.props + .editorconfig"
+    docs: https://learn.microsoft.com/dotnet/fundamentals/code-analysis/overview
+    rationale: >
+      This is the FxCop successor and it replaces "the agent checked code quality"
+      with a failing build. The msbuild parser reports per-rule counts so the
+      reviewer targets rule ids instead of eyeballing.
+
+  - id: format
+    tier: L0
+    lane: inner
+    claim: "formatting matches .editorconfig"
+    tool: dotnet-format
+    license: "MIT (free, commercial use OK)"
+    command: dotnet format --verify-no-changes --no-restore
+    parser: exitcode
+    threshold: exit == 0
+    blocking: false
+    installHint: "included in the .NET SDK"
+    docs: https://learn.microsoft.com/dotnet/core/tools/dotnet-format
+    rationale: "Keeps AI diffs free of whitespace and using-order churn."
+
+  - id: secrets
+    tier: L0
+    lane: inner
+    claim: "no secrets or license keys committed"
+    tool: gitleaks
+    license: "MIT (free, commercial use OK)"
+    command: gitleaks detect --no-banner --redact --report-format sarif --report-path {EVIDENCE_DIR}/gitleaks.sarif
+    parser: sarif
+    evidence: "{EVIDENCE_DIR}/gitleaks.sarif"
+    threshold: total == 0
+    blocking: true
+    installHint: "brew install gitleaks | https://github.com/gitleaks/gitleaks/releases"
+    docs: https://github.com/gitleaks/gitleaks
+    rationale: "An agent pasting a key into a config file is a routine failure."
+
+  - id: tests
+    tier: L1
+    lane: inner
+    claim: "the test suite passes"
+    tool: dotnet-test
+    license: "MIT (free, commercial use OK)"
+    command: dotnet test --nologo --no-build --logger "trx;LogFileName={EVIDENCE_DIR}/results.trx"
+    parser: trx
+    evidence: "{EVIDENCE_DIR}/results.trx"
+    threshold: failed == 0
+    blocking: true
+    docs: https://learn.microsoft.com/dotnet/core/tools/dotnet-test
+    rationale: "Replaces the assertion 'tests pass' with a trx file."
+
+  - id: coverage-diff
+    tier: L1
+    lane: inner
+    claim: "lines changed by this task are covered by tests"
+    tool: coverlet
+    license: "MIT (free, commercial use OK)"
+    command: dotnet test --nologo --collect:"XPlat Code Coverage" --results-directory {EVIDENCE_DIR}/cov -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura
+    parser: cobertura-diff
+    evidence: "{EVIDENCE_DIR}/cov/**/coverage.cobertura.xml"
+    threshold: diffLineRate >= 0.80
+    blocking: true
+    ratchet: true
+    installHint: "add coverlet.collector to each test project"
+    docs: https://github.com/coverlet-coverage/coverlet
+    rationale: >
+      Diff-scoped, not global. A legacy solution at 6% coverage can enforce 80%
+      on new code today, which global coverage can never do.
+
+  - id: vulnerable-packages
+    tier: L2
+    lane: outer
+    claim: "no known-vulnerable NuGet packages, including transitive"
+    tool: dotnet-list-package
+    license: "MIT (free, commercial use OK)"
+    command: dotnet list package --vulnerable --include-transitive
+    parser: regex
+    parserArgs:
+      pattern: "(?P<advisories>\\d+)\\s+vulnerable"
+    threshold: advisories == 0
+    blocking: true
+    allowFailure: false
+    docs: https://learn.microsoft.com/nuget/consume-packages/consuming-packages
+    rationale: "CVE presence is a fact about a lock file, not a judgement call."
+
+  - id: version-consistency
+    tier: L2
+    lane: inner
+    claim: "package versions are consistent across all projects"
+    tool: dotnet
+    license: "MIT (free, commercial use OK)"
+    command: ./scripts/check-package-versions.sh
+    parser: exitcode
+    threshold: exit == 0
+    blocking: false
+    docs: https://learn.microsoft.com/nuget/consume-packages/central-package-management
+    rationale: >
+      Mismatched versions of the same package across projects produce runtime
+      failures that look like application bugs. Central Package Management
+      (Directory.Packages.props) removes the class entirely.
+
+  - id: mutation-diff
+    tier: L3
+    lane: outer
+    claim: "tests on changed code are meaningful, not merely present"
+    tool: stryker-net
+    license: "Apache-2.0 (free, commercial use OK)"
+    command: dotnet stryker --since:{BASE} --reporter json --output {EVIDENCE_DIR}/stryker
+    parser: stryker
+    evidence: "{EVIDENCE_DIR}/stryker/reports/mutation-report.json"
+    threshold: mutationScore >= 60
+    blocking: true
+    ratchet: true
+    installHint: "dotnet tool install -g dotnet-stryker"
+    docs: https://stryker-mutator.io/docs/stryker-net/introduction/
+    rationale: >
+      Catches the signature failure of AI-written tests: code is executed but
+      nothing is asserted. --since keeps it affordable on a large solution.
+
+  - id: leak-dotnet
+    tier: L3
+    lane: outer
+    claim: "managed heap growth is bounded under repeated exercise"
+    tool: dotnet-gcdump
+    license: "MIT (free, commercial use OK)"
+    command: ./scripts/leak-probe.sh {EVIDENCE_DIR}
+    parser: gcdump-delta
+    parserArgs:
+      baseline: heap-baseline.json
+      current: heap-after.json
+      field: heapBytes
+    threshold: growthRatio <= 1.10
+    blocking: true
+    installHint: "dotnet tool install -g dotnet-gcdump && dotnet tool install -g dotnet-counters"
+    docs: https://learn.microsoft.com/dotnet/core/diagnostics/dotnet-gcdump
+    rationale: >
+      An LLM cannot observe heap retention; it can only guess at patterns. This
+      measures it. Threshold is a growth ratio because absolute heap size is not
+      a leak signal - unbounded growth is.
+
+  - id: arch
+    tier: L3
+    lane: inner
+    claim: "architecture layer boundaries are not violated"
+    tool: archunitnet
+    license: "Apache-2.0 (free, commercial use OK)"
+    command: dotnet test --nologo --filter Category=Architecture --logger "trx;LogFileName={EVIDENCE_DIR}/arch.trx"
+    parser: trx
+    evidence: "{EVIDENCE_DIR}/arch.trx"
+    threshold: failed == 0
+    blocking: true
+    installHint: "add the TngTech.ArchUnitNET.xUnit package to a test project"
+    docs: https://github.com/TNG/ArchUnitNET
+    rationale: >
+      Agents follow local patterns and will happily reference a data layer from
+      a UI project. Expressing boundaries as tests makes the violation fail.

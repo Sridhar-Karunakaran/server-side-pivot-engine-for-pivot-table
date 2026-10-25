@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Gate: no-lint-suppression
+#
+# The most common evasion in AI-generated code: the model hits a lint rule it
+# cannot satisfy and disables the rule instead. Coverage and tests still pass, so
+# nothing else in the pipeline notices.
+#
+# Fails when the diff ADDS a suppression with no justification. A justification is
+# a comment on the same line or the line above containing "why:" or "justified:".
+#
+# Usage: check-suppressions.sh <BASE_REF>
+# Exit 0 = clean. Exit 1 = unjustified suppression added.
+
+set -uo pipefail
+BASE="${1:-HEAD~1}"
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+
+PATTERNS='eslint-disable|@ts-ignore|@ts-expect-error|# pragma: no cover|#pragma warning disable|SuppressMessage|ExcludeFromCodeCoverage|istanbul ignore|# noqa|# type: ignore|@SuppressWarnings'
+
+# Added lines only (leading '+', excluding the +++ header), with file/line context.
+ADDED=$(git diff -U1 --no-color --diff-filter=ACMR "$BASE"..HEAD 2>/dev/null)
+if [ -z "$ADDED" ]; then
+  echo "SKIP: no diff against $BASE"
+  exit 0
+fi
+
+FAILED=0
+file=""
+prev=""
+while IFS= read -r line; do
+  case "$line" in
+    '+++ '*) file="${line#+++ }"; file="${file#b/}" ;;
+    '+'*)
+      body="${line#+}"
+      if echo "$body" | grep -qE "$PATTERNS"; then
+        # Justified if this line or the preceding context line explains why.
+        if echo "$body $prev" | grep -qiE 'why:|justified:'; then
+          echo "  OK (justified) $file: ${body#"${body%%[![:space:]]*}"}"
+        else
+          echo "FAIL: unjustified suppression added in $file" >&2
+          echo "      ${body#"${body%%[![:space:]]*}"}" >&2
+          FAILED=1
+        fi
+      fi
+      ;;
+  esac
+  prev="$line"
+done <<< "$ADDED"
+
+if [ "$FAILED" -ne 0 ]; then
+  cat >&2 <<'MSG'
+
+      A suppression silences a rule that exists because the pattern causes bugs.
+      Two acceptable resolutions:
+        1. Fix the underlying issue so the rule passes.
+        2. Keep the suppression AND add a justification comment saying why the
+           rule does not apply here, e.g.
+             // why: third-party callback signature, deps are intentionally fixed
+             // eslint-disable-next-line react-hooks/exhaustive-deps
+
+      A suppression with no stated reason is indistinguishable from giving up.
+MSG
+  exit 1
+fi
+echo "PASS: no unjustified suppressions added since ${BASE:0:8}"

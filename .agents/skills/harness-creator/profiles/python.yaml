@@ -1,0 +1,160 @@
+id: python
+name: Python
+catalog: catalogs/defects-aspnetcore.md
+
+detect:
+  requires: []
+  signals:
+    - kind: glob
+      value: "pyproject.toml"
+      weight: 9
+    - kind: glob
+      value: "requirements.txt"
+      weight: 7
+    - kind: glob
+      value: "setup.py"
+      weight: 5
+    - kind: glob
+      value: "**/*.py"
+      weight: 3
+
+runtime:
+  buildCommand: python -m build
+  testCommand: pytest
+
+knowledge:
+  - id: ruff-rules
+    url: https://docs.astral.sh/ruff/rules/
+    topics: [lint-rules, rule-ids]
+    required: true
+  - id: python-typing
+    url: https://typing.python.org/en/latest/
+    topics: [types, annotations]
+    required: true
+
+gates:
+  - id: harness-verify
+    tier: L0
+    lane: inner
+    claim: "the control plane matches HARNESS-LOCK.json and every cross-reference resolves"
+    tool: harness
+    license: "n/a (generated)"
+    command: python3 .agent/tools/harness.py verify
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    docs: references/control-plane.md
+    rationale: >
+      Without this gate the control plane is advisory. Thresholds are protected by the
+      ratchet floor, but a policy, workflow or agent definition is just a markdown file
+      an agent can edit - and relaxing a policy is cheaper than satisfying it. This
+      hashes every control-plane file and fails the build on any unreviewed change,
+      dangling cross-reference, orphan, or unroutable task type.
+  - id: lint
+    tier: L0
+    lane: inner
+    claim: "no Ruff violations"
+    tool: ruff
+    license: "MIT (free, commercial use OK)"
+    command: ruff check . --output-format json --output-file {EVIDENCE_DIR}/ruff.json
+    parser: jsonpath
+    evidence: "{EVIDENCE_DIR}/ruff.json"
+    parserArgs:
+      paths:
+        violations: length
+    threshold: violations == 0
+    blocking: true
+    ratchet: true
+    installHint: "pip install ruff"
+    docs: https://docs.astral.sh/ruff/
+    rationale: "Replaces flake8+isort+pyupgrade+more, and runs in milliseconds."
+
+  - id: typecheck
+    tier: L0
+    lane: inner
+    claim: "the project type-checks"
+    tool: mypy
+    license: "MIT (free, commercial use OK)"
+    command: mypy .
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    installHint: "pip install mypy"
+    docs: https://mypy.readthedocs.io/
+    rationale: "Only meaningful with strict settings; check they are on."
+
+  - id: tests
+    tier: L1
+    lane: inner
+    claim: "the test suite passes"
+    tool: pytest
+    license: "MIT (free, commercial use OK)"
+    command: python -m pytest -q --junitxml={EVIDENCE_DIR}/junit.xml
+    parser: junit
+    evidence: "{EVIDENCE_DIR}/junit.xml"
+    threshold: failed == 0
+    blocking: true
+    installHint: "pip install pytest"
+    docs: https://docs.pytest.org/
+    rationale: "The artifact that proves 'tests pass'."
+
+  - id: coverage-diff
+    tier: L1
+    lane: inner
+    claim: "lines changed by this task are covered"
+    tool: coverage.py
+    license: "Apache-2.0 (free, commercial use OK)"
+    command: python -m pytest -q --cov=. --cov-report=xml:{EVIDENCE_DIR}/cobertura.xml
+    parser: cobertura-diff
+    evidence: "{EVIDENCE_DIR}/cobertura.xml"
+    threshold: diffLineRate >= 0.80
+    blocking: true
+    ratchet: true
+    installHint: "pip install pytest-cov"
+    docs: https://coverage.readthedocs.io/
+    rationale: "Diff-scoped, enforceable on any codebase from day one."
+
+  - id: sast
+    tier: L2
+    lane: outer
+    claim: "no insecure code patterns"
+    tool: bandit
+    license: "Apache-2.0 (free, commercial use OK)"
+    command: bandit -r . -f sarif -o {EVIDENCE_DIR}/bandit.sarif
+    parser: sarif
+    evidence: "{EVIDENCE_DIR}/bandit.sarif"
+    threshold: error == 0
+    blocking: true
+    installHint: "pip install bandit[sarif]"
+    docs: https://bandit.readthedocs.io/
+    rationale: "Deterministic detection of eval, pickle, subprocess-shell, weak crypto."
+
+  - id: deps-audit
+    tier: L2
+    lane: outer
+    claim: "no known-vulnerable dependencies"
+    tool: pip-audit
+    license: "Apache-2.0 (free, commercial use OK)"
+    command: pip-audit --format json --output {EVIDENCE_DIR}/pip-audit.json
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    installHint: "pip install pip-audit"
+    docs: https://pypi.org/project/pip-audit/
+    rationale: "PyPA's own auditing tool; no account, no caps."
+
+  - id: mutation-diff
+    tier: L3
+    lane: outer
+    claim: "tests on changed code are meaningful"
+    tool: mutmut
+    license: "BSD-3-Clause (free, commercial use OK)"
+    command: mutmut run --paths-to-mutate {CHANGED_PATHS}
+    parser: regex
+    parserArgs:
+      pattern: "killed:\\s+(?P<killed>\\d+).*survived:\\s+(?P<survived>\\d+)"
+    threshold: survived == 0
+    blocking: true
+    installHint: "pip install mutmut"
+    docs: https://mutmut.readthedocs.io/
+    rationale: "Catches tests that execute code without asserting behaviour."

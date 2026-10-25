@@ -1,0 +1,34 @@
+schema: bugfix-feature
+created: 2026-10-23
+goal: |
+  Backend deltas D1-D6 required by the Syncfusion .NET MAUI Data Server Admin Panel
+  (companion repo change maui-admin-panel): D1 panel-config precedence bootstrap,
+  D2 POST /api/config/import (full REPLACE), D3 multi-user security store + CRUD +
+  BasicAuth against it (deprecates Security.Authorization), D4 GET /api/monitoring,
+  D5 GET /api/diagnostics/logs, D6 credential hygiene (normative). Additive only;
+  existing REST contracts frozen.
+affected_areas:
+  - panel-config-precedence
+  - config-import
+  - security-user-store
+  - monitoring
+  - diagnostics-logs
+  - credential-hygiene
+x-capabilities:
+  - panel-config-precedence
+  - config-import
+  - security-user-store
+  - monitoring
+  - diagnostics-logs
+  - credential-hygiene
+x-artifacts:
+  exploration: EXPLORATION.md
+  proposal: proposal.md
+  design: design.md
+  tasks: tasks.md
+  panel-config-precedence: specs/panel-config-precedence/spec.md
+  config-import: specs/config-import/spec.md
+  security-user-store: specs/security-user-store/spec.md
+  monitoring: specs/monitoring/spec.md
+  diagnostics-logs: specs/diagnostics-logs/spec.md
+  credential-hygiene: specs/credential-hygiene/spec.md

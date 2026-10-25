@@ -1,0 +1,99 @@
+id: dotnet-maui
+name: .NET MAUI
+extends: dotnet-common
+catalog: catalogs/defects-dotnet-ui.md
+
+detect:
+  requires:
+    - glob: "**/*.csproj"
+  signals:
+    - kind: packageRef
+      value: Microsoft.Maui.Controls
+      weight: 10
+    - kind: fileContains
+      value: "**/*.csproj::<UseMaui>true</UseMaui>"
+      weight: 10
+    - kind: glob
+      value: "**/Platforms/Android/MainActivity.cs"
+      weight: 6
+    - kind: packageRef
+      value: Syncfusion.Maui.Core
+      weight: 4
+
+runtime:
+  buildCommand: dotnet build -f net8.0
+  testCommand: dotnet test
+  note: >
+    Device builds are slow and need platform SDKs, so the inner lane targets the
+    net8.0 (non-platform) TFM where the shared code lives. Platform builds and
+    device UI tests belong in the outer lane.
+
+knowledge:
+  - id: maui-lifecycle
+    url: https://learn.microsoft.com/dotnet/maui/fundamentals/app-lifecycle
+    topics: [lifecycle, page-lifecycle]
+    required: true
+  - id: maui-memory
+    url: https://learn.microsoft.com/dotnet/maui/deployment/performance
+    topics: [memory, leaks, handlers, performance]
+    required: true
+  - id: maui-handlers
+    url: https://learn.microsoft.com/dotnet/maui/user-interface/handlers/
+    topics: [handlers, DisconnectHandler, native-peers]
+    required: true
+  - id: dotnet-weakevent
+    url: https://learn.microsoft.com/dotnet/api/system.windows.weakeventmanager
+    topics: [weak-events, retention]
+    required: true
+
+gates:
+  - id: build-platforms
+    tier: L1
+    lane: outer
+    claim: "the app compiles for every target platform"
+    tool: dotnet
+    license: "MIT (free, commercial use OK)"
+    command: dotnet build
+    parser: exitcode
+    threshold: exit == 0
+    blocking: true
+    timeoutSeconds: 3600
+    docs: https://learn.microsoft.com/dotnet/maui/
+    rationale: >
+      Shared code compiling for net8.0 says nothing about the platform TFMs.
+      Outer lane because a full multi-platform build is minutes, not seconds.
+
+  - id: leak-controls
+    tier: L1
+    lane: inner
+    claim: "pages and controls are collected after navigation away"
+    tool: xunit
+    license: "MIT (free, commercial use OK)"
+    command: dotnet test --nologo --filter Category=Leak --logger "trx;LogFileName={EVIDENCE_DIR}/leak.trx"
+    parser: trx
+    evidence: "{EVIDENCE_DIR}/leak.trx"
+    threshold: failed == 0
+    blocking: true
+    docs: https://learn.microsoft.com/dotnet/maui/deployment/performance
+    rationale: >
+      WeakReference collection tests are deterministic, fast, and need no
+      profiler. They catch the MAUI failure mode - handler and event retention -
+      inside the ordinary test gate. Pattern in catalogs/defects-dotnet-ui.md.
+
+  - id: mutation-diff
+    tier: L3
+    lane: outer
+    claim: "tests on changed code are meaningful"
+    tool: stryker-net
+    license: "Apache-2.0 (free, commercial use OK)"
+    command: dotnet stryker --since:{BASE} --reporter json --output {EVIDENCE_DIR}/stryker --target-framework net8.0
+    parser: stryker
+    evidence: "{EVIDENCE_DIR}/stryker/reports/mutation-report.json"
+    threshold: mutationScore >= 55
+    blocking: true
+    ratchet: true
+    installHint: "dotnet tool install -g dotnet-stryker"
+    docs: https://stryker-mutator.io/docs/stryker-net/introduction/
+    rationale: >
+      Pinned to a single TFM: mutating every platform target multiplies runtime
+      with no extra signal.

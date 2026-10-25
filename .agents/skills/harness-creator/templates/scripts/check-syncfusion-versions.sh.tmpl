@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Gate: syncfusion-version-consistency
+#
+# Syncfusion packages share internal assemblies and are supported only in matched
+# sets. Mixed versions produce MissingMethodException and rendering faults that
+# present as application bugs. This is a lock-file fact, so it is a gate.
+#
+# Exit 0 = all Syncfusion packages on one version. Exit 1 = mismatch.
+
+set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+SKIP='-path ./node_modules -o -path ./.git -o -path */obj -o -path */bin -o -path ./.agent'
+FAILED=0
+
+# ---------------------------------------------------------------------------
+# .NET: PackageReference and PackageVersion across every project file.
+# ---------------------------------------------------------------------------
+DOTNET_VERSIONS=$(find . \( $SKIP \) -prune -o -type f \
+                    \( -name '*.csproj' -o -name '*.props' -o -name '*.targets' \) -print 2>/dev/null \
+                  | xargs grep -hoE 'Include="Syncfusion\.[^"]*"[^>]*Version="[^"]*"' 2>/dev/null \
+                  | grep -oE 'Version="[^"]*"' | sed 's/Version="//;s/"//' | sort -u)
+
+if [ -n "$DOTNET_VERSIONS" ]; then
+  COUNT=$(echo "$DOTNET_VERSIONS" | grep -c .)
+  if [ "$COUNT" -gt 1 ]; then
+    echo "FAIL: Syncfusion NuGet packages span $COUNT versions:" >&2
+    echo "$DOTNET_VERSIONS" | sed 's/^/        /' >&2
+    echo "" >&2
+    echo "      Offending references:" >&2
+    find . \( $SKIP \) -prune -o -type f \( -name '*.csproj' -o -name '*.props' \) -print 2>/dev/null \
+      | xargs grep -HnE 'Include="Syncfusion\.[^"]*"[^>]*Version=' 2>/dev/null | sed 's/^/        /' >&2
+    echo "" >&2
+    echo "      Fix: adopt Central Package Management so one file owns versions." >&2
+    echo "      https://learn.microsoft.com/nuget/consume-packages/central-package-management" >&2
+    FAILED=1
+  else
+    echo "PASS: Syncfusion NuGet packages all on $DOTNET_VERSIONS"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# npm: @syncfusion/* across every package.json in the workspace.
+# ---------------------------------------------------------------------------
+NPM_VERSIONS=$(find . \( $SKIP \) -prune -o -name 'package.json' -print 2>/dev/null \
+               | xargs grep -hoE '"@syncfusion/[^"]*":\s*"[^"]*"' 2>/dev/null \
+               | sed -E 's/.*:\s*"//;s/"//' | sed 's/^[\^~]//' | sort -u)
+
+if [ -n "$NPM_VERSIONS" ]; then
+  COUNT=$(echo "$NPM_VERSIONS" | grep -c .)
+  if [ "$COUNT" -gt 1 ]; then
+    echo "FAIL: @syncfusion/* packages span $COUNT versions:" >&2
+    echo "$NPM_VERSIONS" | sed 's/^/        /' >&2
+    echo "" >&2
+    echo "      All @syncfusion/ej2-* packages must be on the same version." >&2
+    echo "      Fix: pin them explicitly, or use an npm 'overrides' block." >&2
+    FAILED=1
+  else
+    echo "PASS: @syncfusion/* packages all on $NPM_VERSIONS"
+  fi
+fi
+
+if [ -z "$DOTNET_VERSIONS" ] && [ -z "$NPM_VERSIONS" ]; then
+  echo "SKIP: no Syncfusion packages found."
+fi
+exit $FAILED
