@@ -40,9 +40,10 @@ The following steps demonstrate how to run the application,
 ## Testing credentials (D6 credential-hygiene)
 
 `PivotController/appsettings.json` ships **without** any username/password
-values (`Security:Authorization:Username/Password` are empty, so Basic Auth is
-inactive by default — the middleware requires both `Enabled: true` **and** a
-non-empty username).
+values (`Security:Authorization` is fully disabled and its Username/Password
+are empty). To test with Basic Authorization enabled, set all three values via
+user-secrets or environment variables — never by editing the tracked
+`appsettings.json`:
 
 To test with Basic Authorization enabled, supply the credential via
 user-secrets or an environment variable — never by editing the tracked
@@ -51,6 +52,7 @@ user-secrets or an environment variable — never by editing the tracked
 ```bash
 cd PivotController
 dotnet user-secrets init
+dotnet user-secrets set "Security:Authorization:Enabled" "true"
 dotnet user-secrets set "Security:Authorization:Username" "admin"
 dotnet user-secrets set "Security:Authorization:Password" "<your-test-password>"
 dotnet run
@@ -59,6 +61,7 @@ dotnet run
 Or with environment variables:
 
 ```bash
+export Security__Authorization__Enabled=true
 export Security__Authorization__Username=admin
 export Security__Authorization__Password='<your-test-password>'
 dotnet run
