@@ -76,7 +76,9 @@ builder.Services.AddSingleton<DatabaseQuerySettingsService>();
 builder.Services.AddSingleton<IDatabaseQueryProviderFactory, DatabaseQueryProviderRegistry>();
 
 builder.Services.AddSingleton<IDataSourceProviderFactory, DataSourceProviderFactory>();
-builder.Services.AddSingleton<IIndexManager, IndexManager>();
+// D1: panel mode makes the panel file the sole index authority (stale persisted
+// indexes.json overlays from standalone runs are ignored).
+builder.Services.AddSingleton<IIndexManager>(sp => ActivatorUtilities.CreateInstance<IndexManager>(sp, panelMode));
 builder.Services.AddHostedService<IndexReloadWorker>();
 
 // General settings (Step 2): port, minimum log level, data folder.

@@ -55,7 +55,7 @@ namespace PivotController.Indexing
 
         public IndexManager(IMemoryCache cache, IDataSourceProviderFactory providerFactory, IndexStore store,
             DataServerSettings settings, PivotController.Configuration.Models.DataStorageSettings dataStorage,
-            ILogger<IndexManager> logger)
+            ILogger<IndexManager> logger, bool panelMode = false)
         {
             _cache = cache;
             _providerFactory = providerFactory;
@@ -63,7 +63,12 @@ namespace PivotController.Indexing
             _settings = settings;
             _dataStorage = dataStorage;
             _logger = logger;
+            _panelMode = panelMode;
         }
+
+        /// <summary>D1/CL-1: in panel mode the panel file is the sole index authority —
+        /// a stale persisted indexes.json from a standalone run must not shadow it.</summary>
+        private readonly bool _panelMode;
 
         public string DataCacheKey(string indexName) => $"data:{indexName}";
         public string EngineCacheKey(string indexName, string hash) => $"engine:{indexName}:{hash}";
@@ -295,10 +300,17 @@ namespace PivotController.Indexing
         public async Task RegisterAllAsync()
         {
             _store.EnsureFiles();
-            var persisted = _store.LoadAll();
+            // D1/CL-1: panel mode ignores the persisted {DataFolder}/indexes.json overlay —
+            // the panel configuration file is the sole index authority there. Standalone
+            // mode keeps the documented merge behavior (persisted entries win).
+            var persisted = _panelMode ? new List<IndexDefinition>() : _store.LoadAll();
             foreach (var definition in persisted)
             {
                 _indexes[definition.Index] = definition;
+            }
+            if (_panelMode && System.IO.File.Exists(_store.DataFolder is null ? "" : System.IO.Path.Combine(_store.DataFolder, "indexes.json")))
+            {
+                _logger.LogInformation("Panel mode: persisted indexes.json overlay ignored (panel configuration file is the sole index authority).");
             }
 
             foreach (var definition in _settings.Indexes)
@@ -309,7 +321,8 @@ namespace PivotController.Indexing
                     continue;
                 }
                 _indexes[definition.Index] = definition;
-                _logger.LogInformation("Index '{Index}' registered from appsettings.json (source: {SourceType}, path: {Path}).",
+                _logger.LogInformation("Index '{Index}' registered from the active configuration source (source: {SourceType}, path: {Path}). " +
+                    "In panel mode this is the panel configuration file; appsettings.json index declarations are ignored.",
                     definition.Index, definition.SourceType, definition.SourcePath);
             }
 
