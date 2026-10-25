@@ -1,0 +1,31 @@
+{
+  "lockVersion": 1,
+  "harnessVersion": "1.0",
+  "contractVersion": "1.0",
+  "generatedAt": "2026-10-25T08:18:55+00:00",
+  "profile": "dotnet-aspnetcore",
+  "overlays": [
+    "syncfusion"
+  ],
+  "tier": "L0",
+  "fingerprint": "3bb9770d5e6a6757c09c233f800dd213",
+  "manifests": [
+    "PivotController/PivotController.csproj",
+    "PivotController/PivotController.sln"
+  ],
+  "configSha256": "8ff27939f2f066d081539f66b39a7da857104492f9533226e7255c9b466b9a55",
+  "gateIds": [
+    "build",
+    "openspec-validate",
+    "no-secrets",
+    "syncfusion-license",
+    "https-live",
+    "cache-live",
+    "db-query-timeout-live"
+  ],
+  "tools": {},
+  "ratchetFloors": {},
+  "knowledge": {},
+  "python": "3.13.16",
+  "git": "d7cdeaead90a7d0c3ecab3338d3da6ec63f02603"
+}
