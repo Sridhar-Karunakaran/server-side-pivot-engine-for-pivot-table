@@ -7,7 +7,7 @@
       "title": "Establish reproducible Release build (L0 characterization)",
       "type": "feature",
       "source": "harness-bootstrap",
-      "status": "backlog",
+      "status": "todo",
       "gates": [
         "build"
       ],
@@ -15,7 +15,9 @@
       "startedAt": "2026-10-25T10:32:21+00:00",
       "baseSha": "2dec119552a803a5bc0d8ce74af1881e0aecdf24",
       "deferred": true,
-      "deferReason": "https-live baseline fails due to pre-existing plaintext credential in appsettings.json (Security.Authorization.Enabled=true) \u2014 unblocking via D6 T-003 first, then T-001 gates green"
+      "deferReason": "https-live baseline fails due to pre-existing plaintext credential in appsettings.json (Security.Authorization.Enabled=true) \u2014 unblocking via D6 T-003 first, then T-001 gates green",
+      "promotedAt": "2026-10-25T10:40:42+00:00",
+      "promoteReason": "https-live baseline now green after D6 T-003; ready to complete characterization"
     },
     {
       "id": "T-002",
@@ -37,26 +39,30 @@
       "title": "D6: sanitize appsettings.json credential template + user-secrets README",
       "type": "security",
       "source": "admin-panel-integration/specs/credential-hygiene/spec.md \u00a71",
-      "status": "active",
+      "status": "done",
       "gates": [
         "no-secrets"
       ],
       "notes": "DR-1 answered (2026-10-23): owner accepts history exposure for this test-only credential and rotates on reuse; sanitize as a normal task. Never write the old value anywhere.",
       "startedAt": "2026-10-25T10:37:12+00:00",
-      "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba"
+      "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba",
+      "finishedAt": "2026-10-25T10:40:38+00:00",
+      "approvedBy": "Sridhar-Karunakaran (pre-authorized per session instructions; appsettings.json risk path, DR-1 answered)"
     },
     {
       "id": "T-004",
       "title": "D1: BuildDataServerHost(panelConfigPath) bootstrap + precedence + overlay mode-gating",
       "type": "feature",
       "source": "admin-panel-integration/specs/panel-config-precedence/spec.md",
-      "status": "todo",
+      "status": "active",
       "gates": [
         "build",
         "https-live",
         "cache-live"
       ],
-      "notes": "Refactor Program.cs bootstrap; panel file PRIMARY, overlays standalone-only; loud source log. Companion MAUI repo consumes this."
+      "notes": "Refactor Program.cs bootstrap; panel file PRIMARY, overlays standalone-only; loud source log. Companion MAUI repo consumes this.",
+      "startedAt": "2026-10-25T10:40:40+00:00",
+      "baseSha": "ff027b67e5748905bb8637d348eb374a5f5db305"
     },
     {
       "id": "T-005",
@@ -107,5 +113,7 @@
     }
   ],
   "nextId": 9,
-  "doneLedger": []
+  "doneLedger": [
+    "T-003"
+  ]
 }

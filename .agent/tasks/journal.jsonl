@@ -3,3 +3,6 @@
 {"ts": "2026-10-25T10:37:11+00:00", "event": "pick", "id": "T-002", "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba"}
 {"ts": "2026-10-25T10:37:12+00:00", "event": "defer", "id": "T-002", "reason": "deferring one step: D6 credential sanitize (T-003) unblocks the https-live baseline gate that T-001/T-002 characterization depends on"}
 {"ts": "2026-10-25T10:37:12+00:00", "event": "pick", "id": "T-003", "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba"}
+{"ts": "2026-10-25T10:40:38+00:00", "event": "done", "id": "T-003", "from_status": "active", "override": null, "approvedBy": "Sridhar-Karunakaran (pre-authorized per session instructions; appsettings.json risk path, DR-1 answered)", "evidence": "pass"}
+{"ts": "2026-10-25T10:40:40+00:00", "event": "pick", "id": "T-004", "baseSha": "ff027b67e5748905bb8637d348eb374a5f5db305"}
+{"ts": "2026-10-25T10:40:42+00:00", "event": "promote", "id": "T-001", "reason": "https-live baseline now green after D6 T-003; ready to complete characterization"}
