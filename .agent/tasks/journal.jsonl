@@ -6,3 +6,4 @@
 {"ts": "2026-10-25T10:40:38+00:00", "event": "done", "id": "T-003", "from_status": "active", "override": null, "approvedBy": "Sridhar-Karunakaran (pre-authorized per session instructions; appsettings.json risk path, DR-1 answered)", "evidence": "pass"}
 {"ts": "2026-10-25T10:40:40+00:00", "event": "pick", "id": "T-004", "baseSha": "ff027b67e5748905bb8637d348eb374a5f5db305"}
 {"ts": "2026-10-25T10:40:42+00:00", "event": "promote", "id": "T-001", "reason": "https-live baseline now green after D6 T-003; ready to complete characterization"}
+{"ts": "2026-10-25T10:42:01+00:00", "event": "done", "id": "T-001", "from_status": "todo", "override": null, "approvedBy": "Sridhar-Karunakaran (pre-authorized per session instructions)", "evidence": "pass"}

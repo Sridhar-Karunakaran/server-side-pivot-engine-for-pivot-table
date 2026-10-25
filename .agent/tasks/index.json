@@ -7,7 +7,7 @@
       "title": "Establish reproducible Release build (L0 characterization)",
       "type": "feature",
       "source": "harness-bootstrap",
-      "status": "todo",
+      "status": "done",
       "gates": [
         "build"
       ],
@@ -17,7 +17,9 @@
       "deferred": true,
       "deferReason": "https-live baseline fails due to pre-existing plaintext credential in appsettings.json (Security.Authorization.Enabled=true) \u2014 unblocking via D6 T-003 first, then T-001 gates green",
       "promotedAt": "2026-10-25T10:40:42+00:00",
-      "promoteReason": "https-live baseline now green after D6 T-003; ready to complete characterization"
+      "promoteReason": "https-live baseline now green after D6 T-003; ready to complete characterization",
+      "finishedAt": "2026-10-25T10:42:01+00:00",
+      "approvedBy": "Sridhar-Karunakaran (pre-authorized per session instructions)"
     },
     {
       "id": "T-002",
@@ -114,6 +116,7 @@
   ],
   "nextId": 9,
   "doneLedger": [
-    "T-003"
+    "T-003",
+    "T-001"
   ]
 }
