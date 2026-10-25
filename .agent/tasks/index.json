@@ -56,7 +56,7 @@
       "title": "D1: BuildDataServerHost(panelConfigPath) bootstrap + precedence + overlay mode-gating",
       "type": "feature",
       "source": "admin-panel-integration/specs/panel-config-precedence/spec.md",
-      "status": "active",
+      "status": "done",
       "gates": [
         "build",
         "https-live",
@@ -64,7 +64,8 @@
       ],
       "notes": "Refactor Program.cs bootstrap; panel file PRIMARY, overlays standalone-only; loud source log. Companion MAUI repo consumes this.",
       "startedAt": "2026-10-25T10:40:40+00:00",
-      "baseSha": "ff027b67e5748905bb8637d348eb374a5f5db305"
+      "baseSha": "ff027b67e5748905bb8637d348eb374a5f5db305",
+      "finishedAt": "2026-10-25T10:45:28+00:00"
     },
     {
       "id": "T-005",
@@ -117,6 +118,7 @@
   "nextId": 9,
   "doneLedger": [
     "T-003",
-    "T-001"
+    "T-001",
+    "T-004"
   ]
 }
