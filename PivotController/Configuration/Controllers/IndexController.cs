@@ -164,8 +164,24 @@ namespace PivotController.Configuration.Controllers
         };
 
         [HttpPost]
-        public async Task<ActionResult<IndexStatusResponse>> Create([FromBody] IndexDefinition definition)
-        {            try
+        public async Task<ActionResult<IndexStatusResponse>> Create([FromBody] JsonElement body)
+        {
+            // Same options as Edit: panel payloads send null for CSV fields that do not
+            // apply to a database index. Default model binding rejects those nulls (HTTP 400).
+            IndexDefinition? definition;
+            try
+            {
+                definition = body.Deserialize<IndexDefinition>(JsonOptions);
+            }
+            catch (JsonException ex)
+            {
+                return UnprocessableEntity(new { error = ex.Message });
+            }
+            if (definition == null)
+            {
+                return UnprocessableEntity(new { error = "Body must be an IndexDefinition JSON object." });
+            }
+            try
             {
                 var status = await _indexManager.CreateIndexAsync(definition).ConfigureAwait(false);
                 return StatusCode(StatusCodes.Status201Created, status);
