@@ -47,12 +47,16 @@ namespace PivotController
             var builder = WebApplication.CreateBuilder(args);
             var CustomOrigins = "_customOrigins";
 
-            // D1 §1: the panel file is the FIRST JSON configuration source, ahead of
-            // appsettings.json / appsettings.{env}.json / env vars / command line.
-            // D1 §2: in panel mode the {DataFolder}/*.json persisted overlays are
-            // suppressed (CL-1) — overlay loading below is gated on !panelMode.
+            // D1 §1/§3: in panel mode the panel file is the SOLE data-server configuration
+            // source. .NET's configuration merge would union backend appsettings.json with
+            // the panel file (appsettings-only entries — e.g. index [2] Sales-Db — would
+            // leak into panel mode, and deleted panel indexes would resurrect from
+            // appsettings at restart). A dedicated appsettings-free builder isolates
+            // panel mode; overlays are suppressed there (D1 §2/CL-1) and env/args remain
+            // available for infrastructure keys.
             if (panelMode)
             {
+                builder.Configuration.Sources.Clear();
                 builder.Configuration.AddJsonFile(panelConfigPath, optional: false, reloadOnChange: false);
                 Console.WriteLine($"Data Server configuration loaded from {panelConfigPath} (panel mode); appsettings.json data-server sections are ignored while this file exists.");
             }
