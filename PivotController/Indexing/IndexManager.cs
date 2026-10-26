@@ -566,6 +566,11 @@ namespace PivotController.Indexing
                                 new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = DateTimeOffset.UtcNow.AddDays(7) });
                         }
                         var status = SetStatus(definition.Index, IndexStatus.Ready, data.Count, DateTime.UtcNow, null);
+                        // Data changed (or was just loaded). Cached pivot engines were built
+                        // against the previous dataset and would keep serving stale cells
+                        // after Reload, Enable, or a source-file edit. Evict them so the
+                        // next pivot request rebuilds from the fresh data cache.
+                        EvictEngineCache(definition.Index);
                         _logger.LogInformation("Index '{Index}' loaded {RowCount} rows ({Mode}).",
                             definition.Index, data.Count, manual ? "manual" : "auto/bootstrap");
                         return status;

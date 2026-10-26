@@ -55,7 +55,46 @@ namespace PivotController.Data.Providers
             {
                 return sourcePath;
             }
-            return Path.Combine(dataFolder, sourcePath);
+            var copied = Path.Combine(dataFolder, sourcePath);
+            // Sample files are copied to the app output at build time. Editing the
+            // project DataSource file (or any ancestor copy) while the server is
+            // running would otherwise be invisible to Reload and to Stop/Start.
+            // Prefer the newest existing copy of the same relative path.
+            return NewestExisting(copied, sourcePath);
+        }
+
+        /// <summary>
+        /// Walks up from the process directory looking for the same relative path
+        /// (project DataSource next to the .csproj) and returns whichever copy was
+        /// written last. Falls back to the output-directory path.
+        /// </summary>
+        internal static string NewestExisting(string outputPath, string relativePath)
+        {
+            var best = outputPath;
+            DateTime bestWrite = File.Exists(outputPath) ? File.GetLastWriteTimeUtc(outputPath) : DateTime.MinValue;
+            try
+            {
+                var dir = new DirectoryInfo(AppContext.BaseDirectory);
+                for (var depth = 0; dir is not null && depth < 8; depth++, dir = dir.Parent)
+                {
+                    var candidate = Path.Combine(dir.FullName, relativePath);
+                    if (!File.Exists(candidate))
+                    {
+                        continue;
+                    }
+                    var write = File.GetLastWriteTimeUtc(candidate);
+                    if (write > bestWrite)
+                    {
+                        best = candidate;
+                        bestWrite = write;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                // Unreadable ancestor: keep the output copy.
+            }
+            return best;
         }
     }
 }
