@@ -33,10 +33,14 @@ namespace PivotController.Controllers
             _reportSharing = reportSharing;
         }
 
+        // Absolute routes: the class-level api/[controller] template must not prefix these.
+        // Syncfusion PivotView posts to url + "/" + index (e.g. /api/pivot/post/Sales-Json).
+        // The bare /api/pivot/post form stays for body/query index selection.
         [Route("/api/pivot/post")]
+        [Route("/api/pivot/post/{index}")]
         [HttpPost]
         [SuppressMessage("Security", "CA5391:Use ValidateAntiForgeryToken on methods which support GET, HEAD, PUT, DELETE, PATCH, or POST")]
-        public async Task<object> Post([FromBody] object args)
+        public async Task<object> Post([FromBody] object args, string? index = null)
         {
             ArgumentNullException.ThrowIfNull(args);
             var raw = JObject.Parse(args.ToString() ?? string.Empty);
@@ -52,10 +56,10 @@ namespace PivotController.Controllers
                 param.InternalProperties.Locale = "{\"Null\":\"null\"}";
             }
 
-            // Index-aware routing: request body index -> controller default -> DefaultIndexId fallback.
-            // Index-aware routing: body `index` field -> query ?index= -> controller default.
-            // The query form lets a page pin a pivot grid to its index without body patching.
+            // Index-aware routing: body `index` -> path /api/pivot/post/{index} -> query ?index= -> default.
+            // PivotView appends the index as a path segment; query and body forms stay supported.
             string indexName = raw["index"]?.ToString() ?? raw["Index"]?.ToString()
+                ?? index
                 ?? HttpContext.Request.Query["index"].FirstOrDefault()
                 ?? ServerIndexName;
             // Report Sharing (Step 6): auto-store the client's report configuration on

@@ -426,7 +426,37 @@ namespace PivotController.Indexing
                 throw new ArgumentException("SourceType is immutable");
             }
 
-            // Apply patch fields (everything except SourceType and Index).
+            // Apply patch fields (everything except SourceType). A new Index/Name renames the
+            // server key so clients posting /api/pivot/post/{index} follow the edited name.
+            var requestedKey = !string.IsNullOrWhiteSpace(patch.Index) ? patch.Index.Trim()
+                : !string.IsNullOrWhiteSpace(patch.Name) ? patch.Name.Trim()
+                : null;
+            if (requestedKey != null
+                && !string.Equals(requestedKey, existing.Index, StringComparison.OrdinalIgnoreCase))
+            {
+                if (_indexes.Keys.Any(k => string.Equals(k, requestedKey, StringComparison.OrdinalIgnoreCase)))
+                {
+                    throw new ArgumentException($"Index '{requestedKey}' already exists.");
+                }
+                _indexes.TryRemove(indexName, out _);
+                if (_statuses.TryRemove(indexName, out var priorStatus))
+                {
+                    priorStatus.Index = requestedKey;
+                    _statuses[requestedKey] = priorStatus;
+                }
+                if (_locks.TryRemove(indexName, out var priorLock))
+                {
+                    _locks[requestedKey] = priorLock;
+                }
+                _cache.Remove(DataCacheKey(indexName));
+                EvictEngineCache(indexName);
+                existing.Index = requestedKey;
+                _indexes[requestedKey] = existing;
+            }
+            else if (requestedKey != null)
+            {
+                existing.Index = requestedKey;
+            }
             existing.Name = string.IsNullOrWhiteSpace(patch.Name) ? existing.Name : patch.Name;
             existing.SourcePath = patch.SourcePath ?? existing.SourcePath;
             existing.CsvDelimiter = string.IsNullOrWhiteSpace(patch.CsvDelimiter) ? existing.CsvDelimiter : patch.CsvDelimiter;
@@ -469,7 +499,7 @@ namespace PivotController.Indexing
             {
                 return await LoadAsync(existing, manual: true).ConfigureAwait(false);
             }
-            return GetIndexStatus(indexName);
+            return GetIndexStatus(existing.Index);
         }
 
         public async Task<IndexStatusResponse> ReloadIndexAsync(string indexName, bool manual = true)
