@@ -1,0 +1,10 @@
+{"ts": "2026-10-25T10:32:21+00:00", "event": "pick", "id": "T-001", "baseSha": "2dec119552a803a5bc0d8ce74af1881e0aecdf24"}
+{"ts": "2026-10-25T10:37:11+00:00", "event": "defer", "id": "T-001", "reason": "https-live baseline fails due to pre-existing plaintext credential in appsettings.json (Security.Authorization.Enabled=true) \u2014 unblocking via D6 T-003 first, then T-001 gates green"}
+{"ts": "2026-10-25T10:37:11+00:00", "event": "pick", "id": "T-002", "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba"}
+{"ts": "2026-10-25T10:37:12+00:00", "event": "defer", "id": "T-002", "reason": "deferring one step: D6 credential sanitize (T-003) unblocks the https-live baseline gate that T-001/T-002 characterization depends on"}
+{"ts": "2026-10-25T10:37:12+00:00", "event": "pick", "id": "T-003", "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba"}
+{"ts": "2026-10-25T10:40:38+00:00", "event": "done", "id": "T-003", "from_status": "active", "override": null, "approvedBy": "Sridhar-Karunakaran (pre-authorized per session instructions; appsettings.json risk path, DR-1 answered)", "evidence": "pass"}
+{"ts": "2026-10-25T10:40:40+00:00", "event": "pick", "id": "T-004", "baseSha": "ff027b67e5748905bb8637d348eb374a5f5db305"}
+{"ts": "2026-10-25T10:40:42+00:00", "event": "promote", "id": "T-001", "reason": "https-live baseline now green after D6 T-003; ready to complete characterization"}
+{"ts": "2026-10-25T10:42:01+00:00", "event": "done", "id": "T-001", "from_status": "todo", "override": null, "approvedBy": "Sridhar-Karunakaran (pre-authorized per session instructions)", "evidence": "pass"}
+{"ts": "2026-10-25T10:45:28+00:00", "event": "done", "id": "T-004", "from_status": "active", "override": null, "approvedBy": null, "evidence": "pass"}

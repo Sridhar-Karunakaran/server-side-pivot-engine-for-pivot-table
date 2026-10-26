@@ -37,14 +37,25 @@ namespace PivotController.Reports.Services
                 _logger.LogError(ex, "ReportSharing startup sweep failed.");
             }
             using var timer = new PeriodicTimer(Interval);
-            while (!stoppingToken.IsCancellationRequested
-                && await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+            while (!stoppingToken.IsCancellationRequested)
             {
+                try
+                {
+                    if (!await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+                    {
+                        break;
+                    }
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
                 try
                 {
                     _reportSharing.SweepOnce();
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
                     break;
                 }

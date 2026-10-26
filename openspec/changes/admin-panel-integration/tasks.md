@@ -2,30 +2,31 @@
 
 **Date:** 2026-10-23
 
-> Planning artifact only. Implementation starts **only** in the apply workflow, after
-> **harness setup** (locked). This change is the backend half of the Admin Panel
-> program; the MAUI half lives in the companion repo's `maui-admin-panel` change.
-> Milestones M1–M6 map to the companion change's Steps 1, 2 (D1), 6 (D2), 5/7 (D3),
-> and 8 (D4/D5); D6 spans all of them.
+> Planning artifact, checked off as milestones land (harness locked). This change
+> is the backend half of the Admin Panel program; the MAUI half lives in the
+> companion repo's `maui-admin-panel` change. Milestones M1–M6 map to the
+> companion change's Steps 1, 2 (D1), 6 (D2), 5/7 (D3), and 8 (D4/D5); D6 spans
+> all of them. M0, M1 (D1) and M2 (D6a) are complete; the companion MAUI panel
+> is live against this backend (in-process, start/stop/restart working).
 
 ---
 
 ## M0 — Harness & Baseline
 
-- [ ] **0.1 Harness setup** — run harness-creator against the backend stack (ASP.NET Core net10.0, existing verify scripts as reference gates). Gate ladder must include the D1–D6 verification scenarios below before implementation.
-- [ ] **0.2 Baseline regression** — confirm `verify-https.sh` (33 checks) and `verify-cache.sh` pass on HEAD before any change.
+- [x] **0.1 Harness setup** — run harness-creator against the backend stack (ASP.NET Core net10.0, existing verify scripts as reference gates). Gate ladder must include the D1–D6 verification scenarios below before implementation. *(Done: harness in `.agent/`, verify scripts wired as live gates.)*
+- [x] **0.2 Baseline regression** — confirm `verify-https.sh` (33 checks) and `verify-cache.sh` pass on HEAD before any change. *(Done — note: baseline https-live initially failed 16/33 due to the pre-existing plaintext test credential (auth on, scripted calls 401); resolved by M2 (D6a) sanitization, now 33/33.)*
 
 ## M1 — D1: Panel-Config Precedence (companion Step 1)
 
-- [ ] **1.1** Refactor `Program.cs` bootstrap into `BuildDataServerHost(string? panelConfigPath = null)`; add panel file as the first JSON source when provided; suppress `{DataFolder}/*.json` overlays in panel mode; standalone path untouched.
-- [ ] **1.2** Loud startup source log (panel mode vs standalone mode) + deprecation note for ignored appsettings data-server sections in panel mode.
-- [ ] **1.3** Missing/invalid panel file ⇒ clear construction failure (path + reason), no listener.
-- [ ] **1.4 Verify:** `specs/panel-config-precedence/spec.md` §1–§6 — precedence matrix (panel vs appsettings per section; standalone unchanged; overlay suppression; restart re-read; failure modes). Gate: D1 matrix green.
+- [x] **1.1** Refactor `Program.cs` bootstrap into `BuildDataServerHost(string? panelConfigPath = null)`; add panel file as the first JSON source when provided; suppress `{DataFolder}/*.json` overlays in panel mode; standalone path untouched. *(Done: `DataServerHostBuilder.BuildDataServerHost` + thin `Program.cs` shim; panel file first config source; https/security/reportsharing overlays and the persisted `indexes.json` index store gated on !panelMode — panel file is the sole index authority; standalone verified unchanged.)*
+- [x] **1.2** Loud startup source log (panel mode vs standalone mode) + deprecation note for ignored appsettings data-server sections in panel mode. *(Done: "Data Server configuration loaded from <path> (panel mode)…" vs "…appsettings.json (standalone mode)"; index registration log names the active configuration source.)*
+- [x] **1.3** Missing/invalid panel file ⇒ clear construction failure (path + reason), no listener. *(Done: FileNotFoundException naming the path; verified live, non-zero exit, no listener.)*
+- [x] **1.4 Verify:** `specs/panel-config-precedence/spec.md` §1–§6 — precedence matrix (panel vs appsettings per section; standalone unchanged; overlay suppression; restart re-read; failure modes). Gate: D1 matrix green. *(Done: live-verified precedence (panel indexes win, appsettings Sales-Db ignored), overlay suppression both directions, restart re-read (port 5285→5601 rebind), 7/7 harness gates incl. https-live 33/33 + cache-live. Also added `GET /health` liveness (custom-data-server spec §7.6, planned but previously unimplemented) for the panel reachability probe; pivot POST verified 200 E2E from the panel-configured index.)*
 
 ## M2 — D6a: Credential Hygiene — Template Sanitization
 
-- [ ] **2.1** Remove `Security.Authorization.Username/Password` from shipped `appsettings.json`; add README "standalone testing credentials via user-secrets/env" section; note history-rotation guidance.
-- [ ] **2.2 Verify:** `specs/credential-hygiene/spec.md` §1 — template scan clean; README section present. Gate: hygiene scan (templates) green.
+- [x] **2.1** Remove `Security.Authorization.Username/Password` from shipped `appsettings.json`; add README "standalone testing credentials via user-secrets/env" section; note history-rotation guidance. *(Done: Authorization disabled + empty Username/Password in the shipped template — startup validation rejects Enabled with an empty username, so activation goes through user-secrets/env; README section with rotation note; DR-1 answered.)*
+- [x] **2.2 Verify:** `specs/credential-hygiene/spec.md` §1 — template scan clean; README section present. Gate: hygiene scan (templates) green. *(Done: no-secrets gate green; https-live 33/33 after sanitization.)*
 
 ## M3 — D3: Multi-User Security (companion Steps 5 & 7)
 

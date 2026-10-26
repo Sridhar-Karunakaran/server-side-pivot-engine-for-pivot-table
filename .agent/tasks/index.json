@@ -7,46 +7,65 @@
       "title": "Establish reproducible Release build (L0 characterization)",
       "type": "feature",
       "source": "harness-bootstrap",
-      "status": "todo",
+      "status": "done",
       "gates": [
         "build"
       ],
-      "notes": "First task per the L0 tier contract: nothing else is verifiable until `dotnet build -c Release` passes deterministically on the untouched tree."
+      "notes": "First task per the L0 tier contract: nothing else is verifiable until `dotnet build -c Release` passes deterministically on the untouched tree.",
+      "startedAt": "2026-10-25T10:32:21+00:00",
+      "baseSha": "2dec119552a803a5bc0d8ce74af1881e0aecdf24",
+      "deferred": true,
+      "deferReason": "https-live baseline fails due to pre-existing plaintext credential in appsettings.json (Security.Authorization.Enabled=true) \u2014 unblocking via D6 T-003 first, then T-001 gates green",
+      "promotedAt": "2026-10-25T10:40:42+00:00",
+      "promoteReason": "https-live baseline now green after D6 T-003; ready to complete characterization",
+      "finishedAt": "2026-10-25T10:42:01+00:00",
+      "approvedBy": "Sridhar-Karunakaran (pre-authorized per session instructions)"
     },
     {
       "id": "T-002",
       "title": "Extract verify-dbtimeout.sh characterization script",
       "type": "feature",
       "source": "admin-panel-integration/tasks.md M0 + project-context.md debt",
-      "status": "todo",
+      "status": "backlog",
       "gates": [
         "db-query-timeout-live"
       ],
-      "notes": "Phase-1 timeout verification was manual. Extract to a repo script so the D-delta work has its oracle; gate reports skip until present."
+      "notes": "Phase-1 timeout verification was manual. Extract to a repo script so the D-delta work has its oracle; gate reports skip until present.",
+      "startedAt": "2026-10-25T10:37:11+00:00",
+      "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba",
+      "deferred": true,
+      "deferReason": "deferring one step: D6 credential sanitize (T-003) unblocks the https-live baseline gate that T-001/T-002 characterization depends on"
     },
     {
       "id": "T-003",
       "title": "D6: sanitize appsettings.json credential template + user-secrets README",
       "type": "security",
       "source": "admin-panel-integration/specs/credential-hygiene/spec.md \u00a71",
-      "status": "todo",
+      "status": "done",
       "gates": [
         "no-secrets"
       ],
-      "notes": "DR-1 answered (2026-10-23): owner accepts history exposure for this test-only credential and rotates on reuse; sanitize as a normal task. Never write the old value anywhere."
+      "notes": "DR-1 answered (2026-10-23): owner accepts history exposure for this test-only credential and rotates on reuse; sanitize as a normal task. Never write the old value anywhere.",
+      "startedAt": "2026-10-25T10:37:12+00:00",
+      "baseSha": "3c5d3d6b6f552b984df5df82ef4aa1f95f31f8ba",
+      "finishedAt": "2026-10-25T10:40:38+00:00",
+      "approvedBy": "Sridhar-Karunakaran (pre-authorized per session instructions; appsettings.json risk path, DR-1 answered)"
     },
     {
       "id": "T-004",
       "title": "D1: BuildDataServerHost(panelConfigPath) bootstrap + precedence + overlay mode-gating",
       "type": "feature",
       "source": "admin-panel-integration/specs/panel-config-precedence/spec.md",
-      "status": "todo",
+      "status": "done",
       "gates": [
         "build",
         "https-live",
         "cache-live"
       ],
-      "notes": "Refactor Program.cs bootstrap; panel file PRIMARY, overlays standalone-only; loud source log. Companion MAUI repo consumes this."
+      "notes": "Refactor Program.cs bootstrap; panel file PRIMARY, overlays standalone-only; loud source log. Companion MAUI repo consumes this.",
+      "startedAt": "2026-10-25T10:40:40+00:00",
+      "baseSha": "ff027b67e5748905bb8637d348eb374a5f5db305",
+      "finishedAt": "2026-10-25T10:45:28+00:00"
     },
     {
       "id": "T-005",
@@ -95,5 +114,11 @@
       ],
       "notes": "DR-3 answered: logs/dataserver-{yyyyMMdd}.jsonl at content root. Current-file only, MinimumLogLevel filter, no path traversal."
     }
+  ],
+  "nextId": 9,
+  "doneLedger": [
+    "T-003",
+    "T-001",
+    "T-004"
   ]
 }

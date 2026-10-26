@@ -103,7 +103,7 @@ gates:
     claim: "the HTTPS/TLS behavior verified live (33 checks) still passes"
     tool: verify-https.sh
     license: "repo-owned (free)"
-    command: bash PivotController/verify-https.sh
+    command: bash -lc 'cd PivotController && bash verify-https.sh'
     parser: exitcode
     threshold: exit == 0
     blocking: true
@@ -121,7 +121,7 @@ gates:
     claim: "cache semantics (per-index LRU, keep-on-refresh) verified live still passes"
     tool: verify-cache.sh
     license: "repo-owned (free)"
-    command: bash PivotController/verify-cache.sh
+    command: bash -lc 'cd PivotController && bash verify-cache.sh'
     parser: exitcode
     threshold: exit == 0
     blocking: true
