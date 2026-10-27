@@ -17,6 +17,7 @@ namespace PivotController.Configuration.Services
         private readonly AtomicJsonStore _store;
         private readonly IWebHostEnvironment _environment;
         private readonly MinimumLevelLoggerProvider _minLevelProvider;
+        private readonly ILogger<GeneralSettingsService> _logger;
         private readonly object _sync = new();
 
         public GeneralSettingsService(GeneralSettings settings, AtomicJsonStore store,
@@ -26,9 +27,9 @@ namespace PivotController.Configuration.Services
             _settings = settings;
             _store = store;
             _environment = environment;
+            _logger = logger;
             _minLevelProvider = minLevelProvider;
             minLevelProvider.MinimumLevel = GeneralSettings.ToAspNetLogLevel(settings.MinimumLogLevel);
-            _ = logger;
         }
 
         public GeneralSettings Current
@@ -94,6 +95,7 @@ namespace PivotController.Configuration.Services
             {
                 if (port.HasValue && port.Value != _settings.Port)
                 {
+                    Console.WriteLine($"[General] Port changed {_settings.Port} → {port.Value}. Takes effect after restart (requiresRestart: true).");
                     _settings.Port = port.Value;
                     requiresRestart = true;
                 }
@@ -103,6 +105,11 @@ namespace PivotController.Configuration.Services
                 {
                     if (_settings.MinimumLogLevel != level)
                     {
+                        // Console.WriteLine (not _logger): the change confirmation must be
+                        // visible even when the previous MinimumLogLevel would filter an
+                        // Information entry (e.g. Warn → Error), so the user can confirm
+                        // the switch in the local console/terminal immediately.
+                        Console.WriteLine($"[General] MinimumLogLevel changed {_settings.MinimumLogLevel} → {level}. Applied immediately — messages below {level} are now suppressed.");
                         _settings.MinimumLogLevel = level;
                         ApplyLogLevel(level);
                     }
