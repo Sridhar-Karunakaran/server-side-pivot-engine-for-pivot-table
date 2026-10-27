@@ -120,6 +120,11 @@ namespace PivotController.Configuration.Models
 
         public override T Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
         {
+            // Database and JSON indexes omit these fields (or send null). That is not an error.
+            if (reader.TokenType == System.Text.Json.JsonTokenType.Null)
+            {
+                return Default;
+            }
             if (reader.TokenType == System.Text.Json.JsonTokenType.String)
             {
                 var s = reader.GetString()!;

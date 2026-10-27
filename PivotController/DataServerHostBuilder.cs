@@ -1,4 +1,6 @@
 using PivotController.Configuration.Models;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Configuration.Json;
 using PivotController.Configuration.Services;
 using PivotController.Core.Persistence;
 using PivotController.Data.Providers;
@@ -47,13 +49,30 @@ namespace PivotController
             var builder = WebApplication.CreateBuilder(args);
             var CustomOrigins = "_customOrigins";
 
-            // D1 §1: the panel file is the FIRST JSON configuration source, ahead of
-            // appsettings.json / appsettings.{env}.json / env vars / command line.
-            // D1 §2: in panel mode the {DataFolder}/*.json persisted overlays are
-            // suppressed (CL-1) — overlay loading below is gated on !panelMode.
+            // D1 §1/§3: in panel mode the panel file is the SOLE data-server configuration
+            // source. .NET's configuration merge would union backend appsettings.json with
+            // the panel file (appsettings-only indexes would leak into panel mode, and a
+            // source-file edit followed by Stop/Start would keep serving the appsettings
+            // copy). A dedicated appsettings-free builder isolates panel mode; overlays
+            // stay suppressed (D1 §2/CL-1). Each Start/Restart builds a new host, so the
+            // panel file is re-read from disk (requirement 5) and in-memory data/engine
+            // caches from the previous process do not survive.
             if (panelMode)
             {
-                builder.Configuration.AddJsonFile(panelConfigPath, optional: false, reloadOnChange: false);
+                // Drop appsettings JSON sources only. Environment variables and the
+                // command line stay (infrastructure keys, ASPNETCORE_*). Removing
+                // every source would also drop the host's default environment
+                // provider and break Start/Stop/Restart.
+                var appsettingsSources = builder.Configuration.Sources
+                    .Where(source => source is JsonConfigurationSource json
+                        && json.Path is not null
+                        && json.Path.StartsWith("appsettings", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                foreach (var source in appsettingsSources)
+                {
+                    builder.Configuration.Sources.Remove(source);
+                }
+                builder.Configuration.AddJsonFile(panelConfigPath!, optional: false, reloadOnChange: false);
                 Console.WriteLine($"Data Server configuration loaded from {panelConfigPath} (panel mode); appsettings.json data-server sections are ignored while this file exists.");
             }
             else
