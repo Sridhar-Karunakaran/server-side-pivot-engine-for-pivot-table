@@ -16,20 +16,31 @@ namespace PivotController.Data.Providers
             var path = JsonDataProvider.ResolvePath(definition.SourcePath!, dataFolder);
             using var reader = new StreamReader(path);
             var rows = new List<List<string>>();
+            var sampleLines = new List<string>(6);
+            var delimiter = string.IsNullOrEmpty(definition.CsvDelimiter) ? "," : definition.CsvDelimiter;
             string? line;
             while ((line = await reader.ReadLineAsync(ct).ConfigureAwait(false)) != null)
             {
                 if (!string.IsNullOrWhiteSpace(line))
                 {
-                    rows.Add(SplitCsvLine(line, definition.CsvDelimiter));
+                    rows.Add(SplitCsvLine(line, delimiter));
+                    if (sampleLines.Count < 6)
+                    {
+                        sampleLines.Add(line);
+                    }
                 }
             }
             if (rows.Count == 0)
             {
                 return new List<ExpandoObject>();
             }
-
             var header = rows[0];
+            if (header.Count == 1 && TryDetectAlternativeDelimiter(sampleLines, delimiter, out var detectedDelimiter))
+            {
+                throw new InvalidDataException(
+                    $"CSV delimiter mismatch: configured delimiter '{delimiter}' but the file appears to use '{FormatDelimiter(detectedDelimiter)}'.");
+            }
+
             var mappings = definition.MappingEnabled == true
                 ? definition.FieldMappings?.ToDictionary(m => m.FieldName, m => m.Type, StringComparer.OrdinalIgnoreCase)
                 : null;
@@ -37,6 +48,11 @@ namespace PivotController.Data.Providers
             var result = new List<ExpandoObject>(rows.Count - 1);
             for (int i = 1; i < rows.Count; i++)
             {
+                if (rows[i].Count != header.Count)
+                {
+                    throw new InvalidDataException(
+                        $"CSV row {i + 1} has {rows[i].Count} fields but the header has {header.Count} using delimiter '{delimiter}'. Check the file format and configured delimiter.");
+                }
                 dynamic row = new ExpandoObject();
                 var dict = (IDictionary<string, object?>)row;
                 for (int c = 0; c < header.Count; c++)
@@ -49,6 +65,41 @@ namespace PivotController.Data.Providers
             }
             return result;
         }
+
+        private static bool TryDetectAlternativeDelimiter(
+            IReadOnlyList<string> sampleLines,
+            string configuredDelimiter,
+            out string detectedDelimiter)
+        {
+            string[] candidates = ["#", ",", ";", "|", "\t"];
+            foreach (var candidate in candidates)
+            {
+                if (string.Equals(candidate, configuredDelimiter, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var headerColumns = SplitCsvLine(sampleLines[0], candidate).Count;
+                if (headerColumns <= 1)
+                {
+                    continue;
+                }
+
+                var sampleRows = sampleLines.Skip(1).Take(5).ToArray();
+                if (sampleRows.Length > 0
+                    && sampleRows.All(row => SplitCsvLine(row, candidate).Count == headerColumns))
+                {
+                    detectedDelimiter = candidate;
+                    return true;
+                }
+            }
+
+            detectedDelimiter = string.Empty;
+            return false;
+        }
+
+        private static string FormatDelimiter(string delimiter)
+            => delimiter == "\t" ? "\\t" : delimiter;
 
         internal static List<string> SplitCsvLine(string line, string delimiter)
         {

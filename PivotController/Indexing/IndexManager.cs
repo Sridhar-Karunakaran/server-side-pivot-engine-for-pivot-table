@@ -12,7 +12,11 @@ namespace PivotController.Indexing
         Task RegisterAllAsync();
         Task<List<ExpandoObject>> GetDataAsync(string indexName);
         Task<IndexStatusResponse> CreateIndexAsync(IndexDefinition definition);
-        Task<IndexStatusResponse> EditIndexAsync(string indexName, IndexDefinition patch);
+        Task<IndexStatusResponse> EditIndexAsync(
+            string indexName,
+            IndexDefinition patch,
+            bool? autoReload = null,
+            int? reloadIntervalMinutes = null);
         Task<IndexStatusResponse> ReloadIndexAsync(string indexName, bool manual = true);
         Task<IndexStatusResponse> EnableIndexAsync(string indexName);
         Task<IndexStatusResponse> DisableIndexAsync(string indexName);
@@ -415,7 +419,11 @@ namespace PivotController.Indexing
             return status;
         }
 
-        public async Task<IndexStatusResponse> EditIndexAsync(string indexName, IndexDefinition patch)
+        public async Task<IndexStatusResponse> EditIndexAsync(
+            string indexName,
+            IndexDefinition patch,
+            bool? autoReload = null,
+            int? reloadIntervalMinutes = null)
         {
             if (!_indexes.TryGetValue(indexName, out var existing))
             {
@@ -426,81 +434,144 @@ namespace PivotController.Indexing
                 throw new ArgumentException("SourceType is immutable");
             }
 
-            // Apply patch fields (everything except SourceType). A new Index/Name renames the
-            // server key so clients posting /api/pivot/post/{index} follow the edited name.
+            var candidate = CopyDefinition(existing);
             var requestedKey = !string.IsNullOrWhiteSpace(patch.Index) ? patch.Index.Trim()
                 : !string.IsNullOrWhiteSpace(patch.Name) ? patch.Name.Trim()
                 : null;
-            if (requestedKey != null
-                && !string.Equals(requestedKey, existing.Index, StringComparison.OrdinalIgnoreCase))
+            var renamed = requestedKey != null
+                && !string.Equals(requestedKey, existing.Index, StringComparison.OrdinalIgnoreCase);
+            if (renamed)
             {
                 if (_indexes.Keys.Any(k => string.Equals(k, requestedKey, StringComparison.OrdinalIgnoreCase)))
                 {
                     throw new ArgumentException($"Index '{requestedKey}' already exists.");
                 }
-                _indexes.TryRemove(indexName, out _);
-                if (_statuses.TryRemove(indexName, out var priorStatus))
-                {
-                    priorStatus.Index = requestedKey;
-                    _statuses[requestedKey] = priorStatus;
-                }
-                if (_locks.TryRemove(indexName, out var priorLock))
-                {
-                    _locks[requestedKey] = priorLock;
-                }
-                _cache.Remove(DataCacheKey(indexName));
-                EvictEngineCache(indexName);
-                existing.Index = requestedKey;
-                _indexes[requestedKey] = existing;
             }
-            else if (requestedKey != null)
-            {
-                existing.Index = requestedKey;
-            }
-            existing.Name = string.IsNullOrWhiteSpace(patch.Name) ? existing.Name : patch.Name;
-            existing.SourcePath = patch.SourcePath ?? existing.SourcePath;
-            existing.CsvDelimiter = string.IsNullOrWhiteSpace(patch.CsvDelimiter) ? existing.CsvDelimiter : patch.CsvDelimiter;
+
+            var originalIndex = existing.Index;
+            candidate.Index = requestedKey ?? candidate.Index;
+            candidate.Name = string.IsNullOrWhiteSpace(patch.Name) ? candidate.Name : patch.Name;
+            candidate.SourcePath = patch.SourcePath ?? candidate.SourcePath;
+            candidate.CsvDelimiter = string.IsNullOrWhiteSpace(patch.CsvDelimiter) ? candidate.CsvDelimiter : patch.CsvDelimiter;
             // Separator enums: enums cannot be null, so a patch always carries a value;
-            // apply it unconditionally (defaults match the model defaults when omitted).
-            existing.CsvDecimalSeparator = patch.CsvDecimalSeparator;
-            existing.CsvThousandsSeparator = patch.CsvThousandsSeparator;
-            existing.ConnectionStringName = patch.ConnectionStringName ?? existing.ConnectionStringName;
-            existing.Query = patch.Query ?? existing.Query;
-            existing.AutoReload = patch.AutoReload || (patch.ReloadIntervalMinutes > 0 && patch.AutoReload) ? patch.AutoReload : existing.AutoReload;
-            if (patch.AutoReload)
+            // the controller back-fills omitted/null values from the current definition.
+            candidate.CsvDecimalSeparator = patch.CsvDecimalSeparator;
+            candidate.CsvThousandsSeparator = patch.CsvThousandsSeparator;
+            candidate.ConnectionStringName = patch.ConnectionStringName ?? candidate.ConnectionStringName;
+            candidate.Query = patch.Query ?? candidate.Query;
+            if (autoReload.HasValue)
             {
-                existing.AutoReload = true;
-                if (patch.ReloadIntervalMinutes > 0)
-                {
-                    existing.ReloadIntervalMinutes = patch.ReloadIntervalMinutes;
-                }
+                candidate.AutoReload = autoReload.Value;
             }
-            else if (patch.ReloadIntervalMinutes > 0)
+            if (reloadIntervalMinutes.HasValue)
             {
-                existing.ReloadIntervalMinutes = patch.ReloadIntervalMinutes;
+                candidate.ReloadIntervalMinutes = reloadIntervalMinutes.Value;
             }
             if (patch.MappingEnabled.HasValue || patch.FieldMappings != null)
             {
                 // Explicit false disables mapping; omitted keeps current state.
-                existing.MappingEnabled = patch.MappingEnabled ?? (patch.FieldMappings != null);
-                if (existing.MappingEnabled == true)
+                candidate.MappingEnabled = patch.MappingEnabled ?? (patch.FieldMappings != null);
+                if (candidate.MappingEnabled == true)
                 {
-                    existing.FieldMappings = patch.FieldMappings ?? existing.FieldMappings;
+                    candidate.FieldMappings = patch.FieldMappings ?? candidate.FieldMappings;
                 }
                 else
                 {
-                    existing.FieldMappings = null;
+                    candidate.FieldMappings = null;
                 }
             }
-            existing.UpdatedAt = DateTime.UtcNow;
+            candidate.UpdatedAt = DateTime.UtcNow;
+
+            var hadCachedData = _cache.TryGetValue(DataCacheKey(originalIndex), out List<ExpandoObject>? previousData);
+            var hadPreviousStatus = _statuses.TryGetValue(originalIndex, out var previousStatus);
+            IndexStatusResponse? loadedStatus = null;
+            if (candidate.Enabled)
+            {
+                try
+                {
+                    loadedStatus = await LoadAsync(candidate, manual: true).ConfigureAwait(false);
+                }
+                catch
+                {
+                    if (renamed)
+                    {
+                        _cache.Remove(DataCacheKey(candidate.Index));
+                        _statuses.TryRemove(candidate.Index, out _);
+                    }
+                    else
+                    {
+                        if (hadCachedData && previousData is not null)
+                        {
+                            _cache.Set(DataCacheKey(originalIndex), previousData,
+                                new MemoryCacheEntryOptions { Size = 1, AbsoluteExpiration = DateTimeOffset.UtcNow.AddDays(7) });
+                        }
+                        else
+                        {
+                            _cache.Remove(DataCacheKey(originalIndex));
+                        }
+                        if (hadPreviousStatus && previousStatus is not null)
+                        {
+                            _statuses[originalIndex] = previousStatus;
+                        }
+                        else
+                        {
+                            _statuses.TryRemove(originalIndex, out _);
+                        }
+                    }
+                    throw;
+                }
+            }
+
+            if (renamed)
+            {
+                _indexes.TryRemove(originalIndex, out _);
+                _statuses.TryRemove(originalIndex, out _);
+                _locks.TryRemove(originalIndex, out _);
+                _cache.Remove(DataCacheKey(originalIndex));
+                EvictEngineCache(originalIndex);
+                if (string.Equals(_settings.DefaultIndexId, originalIndex, StringComparison.OrdinalIgnoreCase))
+                {
+                    _settings.DefaultIndexId = candidate.Index;
+                }
+            }
+
+            _indexes[candidate.Index] = candidate;
             Persist();
 
-            if (existing.Enabled)
+            if (loadedStatus is not null)
             {
-                return await LoadAsync(existing, manual: true).ConfigureAwait(false);
+                return loadedStatus;
             }
-            return GetIndexStatus(existing.Index);
+
+            var prior = hadPreviousStatus ? previousStatus : GetIndexStatus(originalIndex);
+            return SetStatus(candidate.Index, prior.Status, prior.RowCount, prior.LoadedAt, prior.LastError);
         }
+
+        private static IndexDefinition CopyDefinition(IndexDefinition definition) => new()
+        {
+            Index = definition.Index,
+            Name = definition.Name,
+            SourceType = definition.SourceType,
+            SourcePath = definition.SourcePath,
+            CsvDelimiter = definition.CsvDelimiter,
+            CsvDecimalSeparator = definition.CsvDecimalSeparator,
+            CsvThousandsSeparator = definition.CsvThousandsSeparator,
+            DatabaseType = definition.DatabaseType,
+            ConnectionString = definition.ConnectionString,
+            ConnectionStringName = definition.ConnectionStringName,
+            Query = definition.Query,
+            AutoReload = definition.AutoReload,
+            ReloadIntervalMinutes = definition.ReloadIntervalMinutes,
+            MappingEnabled = definition.MappingEnabled,
+            FieldMappings = definition.FieldMappings?.Select(mapping => new IndexFieldMapping
+            {
+                FieldName = mapping.FieldName,
+                Type = mapping.Type,
+            }).ToList(),
+            Enabled = definition.Enabled,
+            CreatedAt = definition.CreatedAt,
+            UpdatedAt = definition.UpdatedAt,
+        };
 
         public async Task<IndexStatusResponse> ReloadIndexAsync(string indexName, bool manual = true)
         {

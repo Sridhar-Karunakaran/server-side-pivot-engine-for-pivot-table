@@ -26,6 +26,23 @@ namespace PivotController.Configuration.Controllers
             return options;
         }
 
+        private static bool TryGetPropertyIgnoreCase(JsonElement element, string propertyName, out JsonElement value)
+        {
+            if (element.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (string.Equals(property.Name, propertyName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        value = property.Value;
+                        return true;
+                    }
+                }
+            }
+            value = default;
+            return false;
+        }
+
         public IndexController(IIndexManager indexManager, IDataSourceProviderFactory providerFactory)
         {
             _indexManager = indexManager;
@@ -220,20 +237,43 @@ namespace PivotController.Configuration.Controllers
             // model binding. When omitted from the patch body, back-fill it from the
             // existing definition so EditIndexAsync's strict immutability check passes;
             // a supplied-but-different value is rejected there with 422.
-            bool sourceTypeSpecified = patchElement.ValueKind == JsonValueKind.Object
-                && patchElement.TryGetProperty("sourceType", out var st)
-                && st.ValueKind != JsonValueKind.Null;
+            if (!_indexManager.TryGetDefinition(index, out var current))
+            {
+                return NotFound(new { error = $"Index '{index}' not found." });
+            }
+
+            var sourceTypeSpecified = TryGetPropertyIgnoreCase(patchElement, "sourceType", out var sourceType)
+                && sourceType.ValueKind != JsonValueKind.Null;
             if (!sourceTypeSpecified)
             {
-                if (!_indexManager.TryGetDefinition(index, out var current))
-                {
-                    return NotFound(new { error = $"Index '{index}' not found." });
-                }
                 patch.SourceType = current.SourceType;
             }
+            if (!TryGetPropertyIgnoreCase(patchElement, "csvDelimiter", out var delimiter)
+                || delimiter.ValueKind == JsonValueKind.Null)
+            {
+                patch.CsvDelimiter = current.CsvDelimiter;
+            }
+            if (!TryGetPropertyIgnoreCase(patchElement, "csvDecimalSeparator", out var decimalSeparator)
+                || decimalSeparator.ValueKind == JsonValueKind.Null)
+            {
+                patch.CsvDecimalSeparator = current.CsvDecimalSeparator;
+            }
+            if (!TryGetPropertyIgnoreCase(patchElement, "csvThousandsSeparator", out var thousandsSeparator)
+                || thousandsSeparator.ValueKind == JsonValueKind.Null)
+            {
+                patch.CsvThousandsSeparator = current.CsvThousandsSeparator;
+            }
+            bool? autoReload = TryGetPropertyIgnoreCase(patchElement, "autoReload", out var autoReloadElement)
+                && autoReloadElement.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? patch.AutoReload
+                : null;
+            int? reloadIntervalMinutes = TryGetPropertyIgnoreCase(patchElement, "reloadIntervalMinutes", out var intervalElement)
+                && intervalElement.ValueKind == JsonValueKind.Number
+                ? patch.ReloadIntervalMinutes
+                : null;
             try
             {
-                var status = await _indexManager.EditIndexAsync(index, patch).ConfigureAwait(false);
+                var status = await _indexManager.EditIndexAsync(index, patch, autoReload, reloadIntervalMinutes).ConfigureAwait(false);
                 return Ok(status);
             }
             catch (KeyNotFoundException ex)

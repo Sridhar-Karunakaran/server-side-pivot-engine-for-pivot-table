@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Dynamic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using PivotController.Configuration.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Syncfusion.Pivot.Engine;
@@ -11,12 +12,9 @@ namespace PivotController.Controllers
     [Route("api/[controller]")]
     public class PivotController : Controller
     {
-        // Phase 1 (Index Configuration) testing: index declared controller-side per spec §0.3.1.
-        // Client-side integration sends the index in the request body in Step 8.
-        private const string ServerIndexName = "Sales-Json";
-
         private readonly IMemoryCache _cache;
         private readonly Indexing.IIndexManager _indexManager;
+        private readonly DataServerSettings _dataServerSettings;
         // Report Sharing (Step 6): when EndpointEnabled, every client pivot request's
         // report configuration is stored automatically server-side (spec §6.3.1 note).
         private readonly Reports.Services.ReportSharingService _reportSharing;
@@ -26,11 +24,12 @@ namespace PivotController.Controllers
         private PivotExportEngine<ExpandoObject> pivotExport = new PivotExportEngine<ExpandoObject>();
 
         public PivotController(IMemoryCache cache, Indexing.IIndexManager indexManager,
-            Reports.Services.ReportSharingService reportSharing)
+            Reports.Services.ReportSharingService reportSharing, DataServerSettings dataServerSettings)
         {
             _cache = cache;
             _indexManager = indexManager;
             _reportSharing = reportSharing;
+            _dataServerSettings = dataServerSettings;
         }
 
         // Absolute routes: the class-level api/[controller] template must not prefix these.
@@ -61,7 +60,7 @@ namespace PivotController.Controllers
             string indexName = raw["index"]?.ToString() ?? raw["Index"]?.ToString()
                 ?? index
                 ?? HttpContext.Request.Query["index"].FirstOrDefault()
-                ?? ServerIndexName;
+                ?? _dataServerSettings.DefaultIndexId;
             // Report Sharing (Step 6): auto-store the client's report configuration on
             // every pivot request when the endpoint is enabled. The stored report uses
             // the CLIENT-side structure (camelCase dataSourceSettings, string enums,

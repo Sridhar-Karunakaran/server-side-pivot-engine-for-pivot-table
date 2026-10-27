@@ -18,6 +18,7 @@ namespace PivotController.Indexing
         {
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
             var lastRun = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            var observedUpdates = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
             var startedAt = DateTime.UtcNow;
 
             while (!stoppingToken.IsCancellationRequested)
@@ -43,6 +44,14 @@ namespace PivotController.Indexing
                     {
                         continue;
                     }
+
+                    if (!observedUpdates.TryGetValue(status.Index, out var observedUpdate)
+                        || observedUpdate != definition.UpdatedAt)
+                    {
+                        observedUpdates[status.Index] = definition.UpdatedAt;
+                        lastRun[status.Index] = status.LoadedAt ?? startedAt;
+                    }
+
                     var due = lastRun.TryGetValue(status.Index, out var last)
                         ? last.AddMinutes(definition.ReloadIntervalMinutes)
                         : startedAt.AddMinutes(definition.ReloadIntervalMinutes);
