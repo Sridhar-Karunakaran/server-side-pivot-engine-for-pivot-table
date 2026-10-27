@@ -49,7 +49,21 @@ namespace PivotController.Configuration.Services
                 {
                     return;
                 }
-                Console.WriteLine($": {_categoryName}[{eventId}] {formatter(state, exception)}"
+                // Timestamped line: the panel workflow confirms a MinimumLogLevel change
+                // (or a fresh restart) by watching the server console/terminal, so each
+                // entry must show when it was written alongside the severity-tagged text.
+                var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                var level = logLevel switch
+                {
+                    LogLevel.Trace => "TRACE",
+                    LogLevel.Debug => "DEBUG",
+                    LogLevel.Information => "INFO",
+                    LogLevel.Warning => "WARN",
+                    LogLevel.Error => "ERROR",
+                    LogLevel.Critical => "FATAL",
+                    _ => logLevel.ToString().ToUpperInvariant()
+                };
+                Console.WriteLine($"[{timestamp}] {level}: {_categoryName}[{eventId}] {formatter(state, exception)}"
                     + (exception != null ? Environment.NewLine + exception : string.Empty));
             }
         }
