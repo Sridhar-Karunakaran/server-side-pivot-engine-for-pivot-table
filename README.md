@@ -30,9 +30,14 @@ The following steps demonstrate how to run the application,
 * Once the application is hosted in the localhost, copy and paste its URL in the **Sample->pivot.js** file.
 * Then open the **Sample->pivot.html** file. The pivot table will be populated in the browser.
 
+## Authorization credentials
 
- 
+The checked-in configuration leaves the Basic Authentication username and password blank. If enabling authorization, provide deployment-specific values through environment variables rather than committing credentials:
 
+```powershell
+$env:Security__Authorization__Username = "your-deployment-username"
+$env:Security__Authorization__Password = "your-deployment-password"
+$env:Security__Authorization__Enabled = "true"
+```
 
-
- 
+Use unique credentials for each deployment, restrict CORS to trusted origins, and serve authenticated traffic over HTTPS.
