@@ -16,11 +16,11 @@ namespace PivotController.Configuration.Services
         private readonly ILogger<IndexStore> _logger;
         private readonly object _sync = new();
 
-        public IndexStore(AtomicJsonStore store, DataServerSettings settings, ILogger<IndexStore> logger, IWebHostEnvironment environment)
+        public IndexStore(AtomicJsonStore store, GeneralSettings settings, ILogger<IndexStore> logger, IWebHostEnvironment environment)
         {
             _store = store;
             _logger = logger;
-            DataFolder = Path.Combine(environment.ContentRootPath, "DataSource");
+            DataFolder = Path.Combine(environment.ContentRootPath, settings.DataFolder);
             _indexesPath = Path.Combine(DataFolder, "indexes.json");
         }
 
