@@ -1,27 +1,26 @@
 var pivotGridObj = new ej.pivotview.PivotView({
     dataSourceSettings: {
-        url: 'https://localhost:44350/api/pivot/post',
+        url: 'http://localhost:8765/api/pivot/post',
         mode: 'Server',
         type: 'JSON',
         expandAll: false,
-        rows: [{
-            name: 'ProductID', caption: 'Product ID'
-        }],
+        // rows: [{
+        //     name: 'Sector', caption: 'Sector'
+        // }],
+        // columns: [{
+        //     name: 'EnerType', caption: 'Energy Type'
+        // }],
+        // values: [{
+        //     name: 'PowUnits', caption: 'Power Units'
+        // },
+        // {
+        //     name: 'ProCost', caption: 'Production Cost'
+        // }],
         enableSorting: true,
         formatSettings: [{
-            name: 'Price',
-            format: 'C'
+            name: 'ProCost',
+            format: 'N0'
         }],
-        columns: [{
-            name: 'Year', caption: 'Production Year'
-        }],
-        values: [{
-            name: 'Sold', caption: 'Units Sold'
-        },
-        {
-            name: 'Price', caption: 'Sold Amount'
-        },],
-        allowMemberFilter: true
     },
     enableVirtualization: true,
     enableValueSorting: true,
