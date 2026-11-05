@@ -43,8 +43,6 @@ namespace PivotController.Configuration.Services
 
             public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
             {
-                // Drop messages below the configured General:MinimumLogLevel before the
-                // framework's console provider can write them.
                 if (!IsEnabled(logLevel))
                 {
                     return;

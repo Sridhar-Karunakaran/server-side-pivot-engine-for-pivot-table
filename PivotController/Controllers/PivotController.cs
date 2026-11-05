@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Dynamic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
+using PivotController.Configuration.Models;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Syncfusion.Pivot.Engine;
@@ -11,26 +12,22 @@ namespace PivotController.Controllers
     [Route("api/[controller]")]
     public class PivotController : Controller
     {
-        // Phase 1 (Index Configuration) testing: index declared controller-side per spec §0.3.1.
-        // Client-side integration sends the index in the request body in Step 8.
-        private const string ServerIndexName = "Sales-Json";
-
         private readonly IMemoryCache _cache;
         private readonly Indexing.IIndexManager _indexManager;
-        // Report Sharing (Step 6): when EndpointEnabled, every client pivot request's
-        // report configuration is stored automatically server-side (spec §6.3.1 note).
         private readonly Reports.Services.ReportSharingService _reportSharing;
+        private readonly DataServerSettings _dataServerSettings;
         private bool isRendered;
         private PivotEngine<ExpandoObject> PivotEngine = new PivotEngine<ExpandoObject>();
         private ExcelExport excelExport = new ExcelExport();
         private PivotExportEngine<ExpandoObject> pivotExport = new PivotExportEngine<ExpandoObject>();
 
         public PivotController(IMemoryCache cache, Indexing.IIndexManager indexManager,
-            Reports.Services.ReportSharingService reportSharing)
+            Reports.Services.ReportSharingService reportSharing, DataServerSettings dataServerSettings)
         {
             _cache = cache;
             _indexManager = indexManager;
             _reportSharing = reportSharing;
+            _dataServerSettings = dataServerSettings;
         }
 
         [Route("/api/pivot/post")]
@@ -44,26 +41,15 @@ namespace PivotController.Controllers
             FetchData param = raw.ToObject<FetchData>();
 #pragma warning restore CS8600
             ArgumentNullException.ThrowIfNull(param);
-            // The engine dereferences Locale["Null"] on member generation; a request without
-            // a locale payload must still provide that key.
             if (param.InternalProperties?.Locale == null)
             {
                 param.InternalProperties ??= new CustomProperties();
                 param.InternalProperties.Locale = "{\"Null\":\"null\"}";
             }
 
-            // Index-aware routing: request body index -> controller default -> DefaultIndexId fallback.
-            // Index-aware routing: body `index` field -> query ?index= -> controller default.
-            // The query form lets a page pin a pivot grid to its index without body patching.
             string indexName = raw["index"]?.ToString() ?? raw["Index"]?.ToString()
                 ?? HttpContext.Request.Query["index"].FirstOrDefault()
-                ?? ServerIndexName;
-            // Report Sharing (Step 6): auto-store the client's report configuration on
-            // every pivot request when the endpoint is enabled. The stored report uses
-            // the CLIENT-side structure (camelCase dataSourceSettings, string enums,
-            // no internalProperties) so it matches what a client would configure
-            // (spec §6.3.1, user direction). Never blocks the pivot response —
-            // auto-save failures are logged, not returned to the client.
+                ?? _dataServerSettings.DefaultIndexId;
             if (_reportSharing.EndpointEnabled)
             {
                 try
@@ -150,9 +136,6 @@ namespace PivotController.Controllers
                    : m.Type == Configuration.Models.MappingDataType.Date ? "datetime"
                    : "string",
                 StringComparer.OrdinalIgnoreCase);
-            // FieldMapping (FieldOptions.DataType) takes precedence over the engine's value
-            // autodetection, so a mapping change fully controls the field type delivered to
-            // the client pivot table — including demoting a numeric/date field to string.
             if (param.DataSourceSettings != null)
             {
                 param.DataSourceSettings.FieldMapping = definition.FieldMappings.Select(m => new FieldOptions
@@ -166,15 +149,12 @@ namespace PivotController.Controllers
                     }
                 }).ToList();
             }
-            // Mapping affects engine field types, so cached engines per hash must be rebuilt.
             _indexManager.EvictEngineCache(indexName);
         }
 
         private async Task<EngineProperties> GetEngine(FetchData param, string indexName)
         {
             isRendered = false;
-            // Flexmonster semantics: at most CacheSizeLimit cached responses per index
-            // (LRU per index); 0 disables response caching entirely.
             return await _indexManager.GetOrCreateEngineAsync(indexName, param.Hash, async () =>
             {
                 isRendered = true;
@@ -185,8 +165,6 @@ namespace PivotController.Controllers
 
         private async Task<object> GetData(string indexName)
         {
-            // Data cache is owned by the IndexManager (key: data:{index}); reloads and
-            // enable/disable evict it there so pivot engines always see fresh data.
             return await _indexManager.GetDataAsync(indexName).ConfigureAwait(false);
         }
 

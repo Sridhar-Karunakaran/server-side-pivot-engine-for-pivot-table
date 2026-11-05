@@ -46,9 +46,6 @@ namespace PivotController.Configuration.Services
                 if (string.IsNullOrWhiteSpace(settings.PemKeyPath)) errors.Add("pemKeyPath is required when pemCertPath is set.");
                 else if (!File.Exists(settings.PemKeyPath)) errors.Add($"PEM key file not found: {settings.PemKeyPath}");
             }
-            // X509Store is cross-platform (OpenSSL-backed on Linux/macOS, SChannel on Windows):
-            // the store lookup is no longer Windows-gated — it works everywhere, with a
-            // location fallback (CurrentUser <-> LocalMachine) in ResolveCertificate.
             if (!string.IsNullOrWhiteSpace(settings.Thumbprint) && !string.IsNullOrWhiteSpace(settings.SubjectName))
             {
                 errors.Add("Configure either thumbprint or subjectName for the store lookup, not both.");
@@ -65,9 +62,6 @@ namespace PivotController.Configuration.Services
             }
             if (!string.IsNullOrWhiteSpace(settings.PfxPath))
             {
-                // PFX password is memory-only (never persisted, spec §4.5.1): after a restart
-                // the password comes from appsettings.json; a persisted-PFX PUT without it
-                // must not crash startup — fall back to appsettings' PfxPassword (may be null).
                 X509Certificate2? cert = null;
                 try
                 {
@@ -102,12 +96,6 @@ namespace PivotController.Configuration.Services
                 var configuredLocation = settings.StoreLocation == CertificateStoreLocationOption.LocalMachine
                     ? System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine
                     : System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser;
-                // Search the configured location first, then fall back to the other one:
-                // a certificate commonly lives in LocalMachine\My while a null/defaulted
-                // StoreLocation resolves to CurrentUser (and vice versa) — a strict
-                // single-location miss would degrade the server to an HTTP listener.
-                // X509Store is cross-platform (OpenSSL-backed on Linux/macOS), so this
-                // lookup also works outside Windows.
                 var storeName = string.IsNullOrWhiteSpace(settings.StoreName) ? "My" : settings.StoreName;
                 var findType = storeByThumbprint ? X509FindType.FindByThumbprint : X509FindType.FindBySubjectName;
                 var findValue = storeByThumbprint ? settings.Thumbprint! : settings.SubjectName!;
@@ -131,8 +119,6 @@ namespace PivotController.Configuration.Services
                             findValue, storeLocation, storeName);
                         continue;
                     }
-                    // Pick the first entry that actually has a usable private key (subject-name
-                    // lookups can match multiple certificates; thumbprint matches cannot).
                     X509Certificate2? candidate = null;
                     foreach (var c in found)
                     {
@@ -222,15 +208,6 @@ namespace PivotController.Configuration.Services
             {
                 return combined; // Linux/macOS: Kestrel uses the PEM key directly — nothing further needed.
             }
-            // Windows-only normalization (does NOT affect PFX or Windows-store sources):
-            // CreateFromPemFile yields an EPHEMERAL key handle. Kestrel's SChannel cannot use
-            // an ephemeral handle for the TLS handshake — the browser's connection to
-            // https://localhost:<port> is closed before any HTTP response (ERR_CONNECTION_CLOSED /
-            // "closed before it receives an HTTP response"). Round-tripping through an IN-MEMORY
-            // PFX re-imports the key as a normal CNG key that SChannel can use.
-            // Default key flags (no MachineKeySet): no elevation required.
-            // If the round-trip fails for any reason, fall back to the ORIGINAL combined
-            // certificate — never fail a load that would otherwise succeed.
             try
             {
                 var pfxBytes = combined.Export(X509ContentType.Pfx);

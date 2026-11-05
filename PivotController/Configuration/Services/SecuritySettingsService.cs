@@ -90,9 +90,6 @@ namespace PivotController.Configuration.Services
                     return;
                 }
                 var persisted = _store.Load<SecuritySettings>(path, new SecuritySettings());
-                // Only the persisted fields are validated: credentials stay in appsettings
-                // (never written to disk), so a persisted enabled:true without username/
-                // password here is expected, not an error.
                 if (persisted.CORS == null || string.IsNullOrWhiteSpace(persisted.CORS.AllowOrigin))
                 {
                     _logger.LogWarning("Persisted security.json invalid (CORS:AllowOrigin missing); appsettings Security values kept.");
@@ -102,8 +99,6 @@ namespace PivotController.Configuration.Services
                     && (persisted.CORS.AllowsAllOrigins
                         || persisted.CORS.Origins.Any(o => !SecurityCorsSettings.IsProperOrigin(o))))
                 {
-                    // Flexmonster UG rule (spec §5.2): auth enabled requires specific proper
-                    // origin URLs in AllowOrigin — never '*'. Ignore the invalid persisted state.
                     _logger.LogWarning("Persisted security.json enables Authorization with invalid AllowOrigin ('{Origin}'); requires specific origin URLs; appsettings Security values kept.", persisted.CORS.AllowOrigin);
                     return;
                 }

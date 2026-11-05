@@ -39,8 +39,6 @@ namespace PivotController.Configuration.Controllers
             {
                 enabled = e.GetBoolean();
             }
-            // Explicit null in the body clears the corresponding setting (merge-patch
-            // semantics: null means "remove", omission means "leave unchanged").
             string? Str(string name) =>
                 body.TryGetProperty(name, out var v)
                     ? v.ValueKind == JsonValueKind.String

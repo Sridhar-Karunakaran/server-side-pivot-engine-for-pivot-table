@@ -55,8 +55,6 @@ namespace PivotController.Configuration.Models
             }
             if (SourceType != DataSourceType.Json && SourceType != DataSourceType.Csv)
             {
-                // Database index (spec §3.x): DatabaseType, ConnectionStringName (by reference),
-                // and a single read-only SELECT query are mandatory.
                 if (DatabaseType == null)
                 {
                     errors.Add("DatabaseType is required for database indexes");

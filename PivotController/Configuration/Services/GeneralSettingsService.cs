@@ -136,7 +136,6 @@ namespace PivotController.Configuration.Services
             System.IO.Directory.CreateDirectory(root);
             System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "reports"));
             System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "logs"));
-            // Writability probe per spec §1.4.3.
             var probe = System.IO.Path.Combine(root, ".write-probe");
             System.IO.File.WriteAllText(probe, "ok");
             System.IO.File.Delete(probe);

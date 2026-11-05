@@ -24,60 +24,108 @@ ok()   { echo "  ✔ $1"; PASS=$((PASS+1)); }
 bad()  { echo "  ✘ $1"; FAIL=$((FAIL+1)); }
 
 APPSETTINGS="appsettings.json"
-DATADIR="DataSource"
+DATADIR="$(python3 -c 'import json, os; cfg=json.load(open("appsettings.json")); path=cfg.get("General", {}).get("DataFolder", "DataSource"); print(os.path.abspath(path))')"
+HTTPS_JSON="$DATADIR/https.json"
+curl_flags=(-sk)
+
+if ! python3 - "$PORT" <<'PYEOF'
+import socket, sys
+with socket.socket() as sock:
+    sock.bind(("0.0.0.0", int(sys.argv[1])))
+PYEOF
+then
+  echo "Port $PORT is already in use; choose a free port without stopping the existing server."
+  exit 1
+fi
+
 CERT_DIR="$(mktemp -d)"
+STATE_DIR="$(mktemp -d)"
 CERT="$CERT_DIR/cert.pem"
 KEY="$CERT_DIR/key.pem"
 CERT_PFX="$CERT_DIR/cert.pfx"
-HTTPS_JSON="$DATADIR/https.json"
-
-curl_flags=(-sk)
+SERVER_LOG="$STATE_DIR/server.log"
+SERVER_PID=""
+HAD_HTTPS_JSON=false
+APPSETTINGS_BACKED_UP=false
+HTTPS_JSON_BACKED_UP=false
 
 cleanup() {
   echo "-- cleanup:"
-  [ -f "$APPSETTINGS.bak" ] && mv "$APPSETTINGS.bak" "$APPSETTINGS" && echo "   appsettings.json restored"
-  rm -f "$HTTPS_JSON" && echo "   https.json removed"
+  stop_server
+  if [ "$APPSETTINGS_BACKED_UP" = true ]; then
+    cp "$STATE_DIR/appsettings.json" "$APPSETTINGS" && echo "   appsettings.json restored"
+  fi
+  if [ "$HTTPS_JSON_BACKED_UP" = true ]; then
+    if [ "$HAD_HTTPS_JSON" = true ]; then
+      cp "$STATE_DIR/https.json" "$HTTPS_JSON" && echo "   https.json restored"
+    else
+      rm -f "$HTTPS_JSON" && echo "   generated https.json removed"
+    fi
+  fi
   rm -rf "$CERT_DIR"
-  pkill -f "bin/Debug/net10.0/PivotController" 2>/dev/null
+  rm -rf "$STATE_DIR"
 }
-trap cleanup EXIT
 
-stop_server() { pkill -f "bin/Debug/net10.0/PivotController" 2>/dev/null; sleep 2; }
+stop_server() {
+  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill "$SERVER_PID"
+    wait "$SERVER_PID" 2>/dev/null
+  fi
+  SERVER_PID=""
+}
 
 start_server() {
   stop_server
-  nohup dotnet run --no-build > /tmp/verify-https-server.log 2>&1 &
-  # Probe both schemes: disabled-mode server answers on http:// only.
+  env -u ASPNETCORE_URLS dotnet bin/Debug/net10.0/PivotController.dll > "$SERVER_LOG" 2>&1 &
+  SERVER_PID=$!
   for i in $(seq 1 30); do
     sleep 1
     if curl "${curl_flags[@]}" -o /dev/null "$BASE/api/config/https" 2>/dev/null \
        || curl -s -o /dev/null "http://localhost:$PORT/api/config/https" 2>/dev/null; then return 0; fi
+    if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+      tail -20 "$SERVER_LOG"
+      return 1
+    fi
   done
   return 1
 }
 
+trap cleanup EXIT
+
+mkdir -p "$DATADIR"
+cp "$APPSETTINGS" "$STATE_DIR/appsettings.json" || { echo "Could not back up appsettings.json"; exit 1; }
+APPSETTINGS_BACKED_UP=true
+if [ -f "$HTTPS_JSON" ]; then
+  cp "$HTTPS_JSON" "$STATE_DIR/https.json" || { echo "Could not back up https.json"; exit 1; }
+  HAD_HTTPS_JSON=true
+fi
+HTTPS_JSON_BACKED_UP=true
+
 set_appsettings_https() {  # $1..: json fragment for Https section
-  python3 - "$@" << 'PYEOF'
+  python3 - "$PORT" "$@" << 'PYEOF'
 import json, sys
 path = "appsettings.json"
 cfg = json.load(open(path))
-cfg["Https"] = json.loads(sys.argv[1])
+cfg.setdefault("General", {})["Port"] = int(sys.argv[1])
+cfg["Https"] = json.loads(sys.argv[2])
 json.dump(cfg, open(path, "w"), indent=2)
 PYEOF
 }
 
 echo "=== 0. BUILD & GENERATE TEST CERTIFICATE (PEM + PFX) ==="
-dotnet build 2>&1 | grep -E " error " && { echo "build failed"; exit 1; }
+if ! dotnet build; then
+  echo "build failed"
+  exit 1
+fi
 openssl req -x509 -newkey rsa:2048 -keyout "$KEY" -out "$CERT" -days 2 -nodes -subj "/CN=localhost" 2>/dev/null
 openssl pkcs12 -export -out "$CERT_PFX" -inkey "$KEY" -in "$CERT" -passout pass:test123 2>/dev/null
 [ -s "$CERT" ] && ok "self-signed PEM certificate generated" || bad "openssl failed"
-cp "$APPSETTINGS" "$APPSETTINGS.bak"
 
 echo
 echo "=== 1. HTTPS ENABLED VIA appsettings.json (PEM source, §4.2.3) ==="
-rm -f "$HTTPS_JSON"   # persisted file overrides appsettings — start clean
+rm -f "$HTTPS_JSON"
 set_appsettings_https "{\"Enabled\": true, \"PemCertPath\": \"$CERT\", \"PemKeyPath\": \"$KEY\", \"Protocols\": \"HTTP1_AND_HTTP2\"}"
-start_server && ok "server restarted with HTTPS listener (https://0.0.0.0:$PORT)" || { bad "server failed to start"; tail -20 /tmp/verify-https-server.log; exit 1; }
+start_server && ok "server started with HTTPS listener (https://0.0.0.0:$PORT)" || { bad "server failed to start"; tail -20 "$SERVER_LOG"; exit 1; }
 
 echo "-- GET /api/config/https (§4.5.1):"
 GET=$(curl "${curl_flags[@]}" "$HS")
@@ -109,7 +157,7 @@ V=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_version}" "$HS")
 [ "$V" = "2" ] && ok "listener unchanged until restart (still h2)" || bad "listener changed without restart ($V)"
 
 echo "-- restart -> now HTTP/1 only (§4.3.2):"
-start_server && ok "server restarted with Protocols=HTTP1" || bad "restart failed"
+start_server && ok "server started with Protocols=HTTP1" || bad "server restart failed"
 V=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_version}" "$HS")
 [ "$V" = "1.1" ] && ok "HTTP/2 client falls back to HTTP/1.1 ($V)" || bad "expected HTTP/1.1, got $V"
 
@@ -125,7 +173,7 @@ echo "=== 4. PFX CERTIFICATE SOURCE VIA appsettings.json (§4.2.2) + PASSWORD SE
 echo "-- PFX password is memory-only: it must come from appsettings.json to survive a restart."
 rm -f "$HTTPS_JSON"
 set_appsettings_https "{\"Enabled\": true, \"PfxPath\": \"$CERT_PFX\", \"PfxPassword\": \"test123\", \"Protocols\": \"HTTP1_AND_HTTP2\"}"
-start_server && ok "server restarted with PFX source (password from appsettings)" || bad "PFX restart failed"
+start_server && ok "server started with PFX source (password from appsettings)" || bad "PFX restart failed"
 C=$(curl "${curl_flags[@]}" -o /dev/null -w "%{http_code}" "$HS")
 [ "$C" = "200" ] && ok "HTTPS listener active with PFX certificate" || bad "PFX HTTPS -> $C"
 echo "-- PFX password handling (GET + persistence):"
@@ -149,7 +197,7 @@ PYEOF
 start_server
 C=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/api/config/https")
 [ "$C" = "200" ] && ok "startup degrades to HTTP listener (no crash, 200 on http)" || bad "HTTP fallback -> $C"
-grep -qi "starting HTTP-only" /tmp/verify-https-server.log && ok "clear fallback message logged (password memory-only)" || bad "no fallback message in log"
+grep -qi "starting HTTP-only" "$SERVER_LOG" && ok "clear fallback message logged (password memory-only)" || bad "no fallback message in log"
 curl "${curl_flags[@]}" -o /dev/null --connect-timeout 3 "$HS" 2>/dev/null && bad "HTTPS still active after password loss" || ok "no HTTPS listener in fallback mode"
 
 echo

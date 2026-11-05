@@ -38,15 +38,12 @@ namespace PivotController.Configuration.Services
             };
             watcher.Changed += (_, _) => OnConfigChanged();
             _logger.LogInformation("Watching general config file '{Path}'.", path);
-            // Keep the watcher alive until shutdown. The watcher is disposed by the using
-            // statement when the task completes; Task.Delay(-1) blocks until cancellation.
             try
             {
                 await Task.Delay(Timeout.Infinite, stoppingToken);
             }
             catch (OperationCanceledException)
             {
-                // Shutdown requested.
             }
         }
 

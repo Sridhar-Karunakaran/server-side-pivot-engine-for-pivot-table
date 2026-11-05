@@ -200,10 +200,6 @@ namespace PivotController.Configuration.Controllers
             {
                 return UnprocessableEntity(new { error = "Body must be an IndexDefinition JSON object." });
             }
-            // SourceType is a non-nullable enum, so its absence cannot round-trip through
-            // model binding. When omitted from the patch body, back-fill it from the
-            // existing definition so EditIndexAsync's strict immutability check passes;
-            // a supplied-but-different value is rejected there with 422.
             bool sourceTypeSpecified = patchElement.ValueKind == JsonValueKind.Object
                 && patchElement.TryGetProperty("sourceType", out var st)
                 && st.ValueKind != JsonValueKind.Null;

@@ -20,8 +20,6 @@ namespace PivotController.Configuration.Services
         {
             _store = store;
             _logger = logger;
-            // Data files live under {ContentRoot}/DataSource (sample data files); runtime index
-            // metadata is persisted to {DataFolder}/indexes.json.
             DataFolder = Path.Combine(environment.ContentRootPath, "DataSource");
             _indexesPath = Path.Combine(DataFolder, "indexes.json");
         }

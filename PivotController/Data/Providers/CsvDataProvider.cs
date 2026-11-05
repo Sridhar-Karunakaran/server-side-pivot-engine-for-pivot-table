@@ -112,8 +112,6 @@ namespace PivotController.Data.Providers
         private static object? AutoDetect(string raw, IndexDefinition definition)
         {
             if (long.TryParse(raw, out var l)) return l;
-            // Numeric detection must honor the configured separators, e.g. "1.234,56"
-            // (dec=Comma, thou=Dot) or "1 234 567,89" (thou=Space).
             if (TryParseNumber(raw, definition, out var configured))
             {
                 return configured;
@@ -141,11 +139,8 @@ namespace PivotController.Data.Providers
         {
             var dec = definition.CsvDecimalSeparator.ToChar();
             var thou = definition.CsvThousandsSeparator.ToChar();
-            // Strip the thousands separator first, then normalize the decimal separator.
             if (thou == dec)
             {
-                // Same symbol configured for both (e.g. "," for both): treat groups as thousands
-                // only when the remaining digits after the last separator are exactly 3.
                 return ParseAmbiguous(raw, dec);
             }
             raw = raw.Replace(thou.ToString(), string.Empty);
@@ -161,7 +156,6 @@ namespace PivotController.Data.Providers
             var last = raw.LastIndexOf(separator);
             if (last > -1 && raw.Length - last - 1 == 3 && raw.Length - 1 != 3)
             {
-                // "1,234,567" style — all occurrences are thousands separators.
                 raw = raw.Replace(separator.ToString(), string.Empty);
                 return double.Parse(raw, System.Globalization.CultureInfo.InvariantCulture);
             }

@@ -125,7 +125,6 @@ namespace PivotController.Data.Providers
             var value = _configuration.GetConnectionString(connectionStringName);
             if (string.IsNullOrWhiteSpace(value))
             {
-                // Never echo any connection string value in errors (spec §3.x.2.2).
                 throw new InvalidOperationException($"Connection string '{connectionStringName}' is not configured in ConnectionStrings.");
             }
             return value;
@@ -191,11 +190,9 @@ namespace PivotController.Data.Providers
             catch (Exception ex)
             {
                 sw.Stop();
-                // Connection strings/credentials never surfaced (only provider error text, sanitized).
                 var message = ex.Message;
                 if (message?.IndexOf(";", StringComparison.Ordinal) >= 0 && ex is not InvalidOperationException && ex is not DatabaseProviderUnavailableException)
                 {
-                    // ADO.NET connect failures sometimes embed the connection string; strip it.
                     message = ex.GetType().Name + " while connecting to the database.";
                 }
                 return (false, message, sw.ElapsedMilliseconds, new List<string>());

@@ -35,8 +35,6 @@ namespace PivotController.Configuration.Models
                 {
                     errors.Add("Security:Authorization:Password is required when Authorization is enabled");
                 }
-                // Flexmonster UG rule: when basic authorization is enabled, Allow origin must
-                // define specific origin URLs — never "*" (allow all) and never empty.
                 if (CORS == null || string.IsNullOrWhiteSpace(CORS.AllowOrigin))
                 {
                     errors.Add("Security:CORS:AllowOrigin must be specified when Authorization is enabled");
@@ -123,8 +121,6 @@ namespace PivotController.Configuration.Models
             {
                 return false;
             }
-            // Strict origin check: only http/https URLs with a host; Uri.TryCreate accepts
-            // things like "not a url" (implicit file path) or "C:\path" that are not origins.
             return (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
                 && !string.IsNullOrWhiteSpace(uri.Host);
         }

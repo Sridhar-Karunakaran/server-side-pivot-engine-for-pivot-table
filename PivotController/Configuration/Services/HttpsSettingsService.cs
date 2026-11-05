@@ -58,7 +58,6 @@ namespace PivotController.Configuration.Services
                 static string? Normalize(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
                 var candidate = _settings.Sanitized();
                 if (enabled.HasValue) candidate.Enabled = enabled.Value;
-                // Explicit null in the patch clears the setting (empty string after Deref).
                 candidate.PfxPath = pfxPath == null ? candidate.PfxPath : Normalize(pfxPath);
                 candidate.PemCertPath = pemCertPath == null ? candidate.PemCertPath : Normalize(pemCertPath);
                 candidate.PemKeyPath = pemKeyPath == null ? candidate.PemKeyPath : Normalize(pemKeyPath);
@@ -69,9 +68,6 @@ namespace PivotController.Configuration.Services
                 if (protocols.HasValue) candidate.Protocols = protocols.Value;
 
                 var errors = _certificates.Validate(candidate);
-                // Verify the certificate loads and can serve TLS (private key present) before
-                // persisting — browsers enforce trust/validity themselves, so nothing more
-                // is checked server-side.
                 if (errors.Count == 0 && candidate.Enabled)
                 {
                     var candidateWithSecrets = candidate;
@@ -83,7 +79,6 @@ namespace PivotController.Configuration.Services
                     return (Current, false, errors);
                 }
 
-                // Apply onto the live settings object; PFX password is memory-only.
                 _settings.Enabled = candidate.Enabled;
                 _settings.PfxPath = candidate.PfxPath;
                 _settings.PemCertPath = candidate.PemCertPath;

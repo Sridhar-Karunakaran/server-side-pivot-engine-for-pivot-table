@@ -11,8 +11,6 @@ namespace PivotController.Reports.Services
     /// </summary>
     public class ReportSweepWorker : BackgroundService
     {
-        // 15-second cadence so short expirations (ReportExpirationTime = 1 minute)
-        // are honored promptly instead of waiting a full 5 minutes (user direction).
         private static readonly TimeSpan Interval = TimeSpan.FromSeconds(15);
 
         private readonly ReportSharingService _reportSharing;
@@ -27,7 +25,6 @@ namespace PivotController.Reports.Services
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation("ReportSharing sweep worker started (every {Seconds} seconds).", Interval.TotalSeconds);
-            // Startup pass: remove reports already expired before this run (spec §6.4).
             try
             {
                 _reportSharing.SweepOnce();

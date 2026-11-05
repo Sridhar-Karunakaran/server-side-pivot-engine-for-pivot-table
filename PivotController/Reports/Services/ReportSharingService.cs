@@ -61,7 +61,6 @@ namespace PivotController.Reports.Services
             get { lock (_sync) return _settings.EndpointEnabled; }
         }
 
-        // ---- Settings patch (called by ReportSharingConfigController) ----
 
         /// <summary>
         /// Merge-patch of Report Sharing settings (spec §6.7.2). All fields except
@@ -142,7 +141,6 @@ namespace PivotController.Reports.Services
                     _logger.LogWarning("Persisted reportsharing.json invalid ({Errors}); appsettings values kept.", string.Join("; ", errors));
                     return;
                 }
-                // Non-null persisted fields override appsettings (same precedence as Steps 2-5).
                 _settings.EndpointEnabled = persisted.EndpointEnabled;
                 if (!string.IsNullOrWhiteSpace(persisted.PathToFolder)) _settings.PathToFolder = persisted.PathToFolder;
                 _settings.ReportExpirationTime = persisted.ReportExpirationTime;
@@ -152,7 +150,6 @@ namespace PivotController.Reports.Services
             }
         }
 
-        // ---- Report lifecycle ----
 
         private string PayloadPath(string reportId) => System.IO.Path.Combine(ReportsFolderPath, $"{reportId}.json");
 
@@ -173,7 +170,6 @@ namespace PivotController.Reports.Services
                 {
                     return (SaveResult.EndpointDisabled, null);
                 }
-                // Opaque blob: only JSON validity is checked (structure not validated).
                 JToken? reportToken;
                 try
                 {
@@ -194,7 +190,6 @@ namespace PivotController.Reports.Services
                     {
                         if (_settings.AutoDeletingEnabled)
                         {
-                            // Evict oldest until the new report fits (spec §6.5.3).
                             foreach (var old in ListMetadataNoLock().OrderBy(m => m.CreatedAt).ToList())
                             {
                                 if (current + sizeBytes <= quotaBytes)
@@ -212,7 +207,6 @@ namespace PivotController.Reports.Services
                         }
                         else
                         {
-                            // Auto-Delete disabled: save fails (spec §6.5.2).
                             return (SaveResult.QuotaExceeded, null);
                         }
                     }
@@ -230,8 +224,6 @@ namespace PivotController.Reports.Services
                         : null,
                     SizeBytes = sizeBytes
                 };
-                // Single JSON file per report (user direction): metadata + client-side
-                // report in one {reportId}.json — no separate .meta.json sidecar.
                 var file = new ReportFile
                 {
                     ReportId = meta.ReportId,
@@ -303,7 +295,6 @@ namespace PivotController.Reports.Services
             }
         }
 
-        // ---- Sweep (spec §6.4/§6.6, called by ReportSweepWorker) ----
 
         /// <summary>
         /// One cleanup pass: (1) expiration — delete every expired report REGARDLESS of
@@ -351,7 +342,6 @@ namespace PivotController.Reports.Services
             }
         }
 
-        // ---- helpers ----
 
         private List<ReportMetadata> ListMetadataNoLock()
         {

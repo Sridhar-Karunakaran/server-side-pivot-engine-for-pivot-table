@@ -49,7 +49,6 @@ namespace PivotController.Indexing
         private readonly ConcurrentDictionary<string, IndexStatusResponse> _statuses = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, SemaphoreSlim> _engineLocks = new(StringComparer.OrdinalIgnoreCase);
-        // Per-index LRU tracking of cached engine responses (Flexmonster cacheSizeLimit semantics).
         private readonly ConcurrentDictionary<string, LinkedList<string>> _engineLru = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, Dictionary<string, LinkedListNode<string>>> _engineLruIndex = new(StringComparer.OrdinalIgnoreCase);
 
@@ -70,7 +69,6 @@ namespace PivotController.Indexing
 
         public void EvictEngineCache(string indexName)
         {
-            // Evict all tracked engine responses for this index (used on reload/mapping change).
             if (_engineLruIndex.TryRemove(indexName, out var nodes))
             {
                 foreach (var key in nodes.Keys)
@@ -98,7 +96,6 @@ namespace PivotController.Indexing
                 });
                 TrackEngine(indexName, key, _dataStorage.CacheSizeLimit);
             }
-            // CacheSizeLimit == 0: responses are not cached; every request rebuilds.
             return value;
         }
 
@@ -142,8 +139,6 @@ namespace PivotController.Indexing
 
         public CacheStatsResponse GetCacheStats()
         {
-            // Per-index response cache stats (Flexmonster semantics): count of cached
-            // engine responses per index against the configured CacheSizeLimit.
             var cached = new List<string>();
             var evicted = new List<string>();
             foreach (var definition in _indexes.Values)
@@ -276,7 +271,6 @@ namespace PivotController.Indexing
                     }
                     else if (current != type && !(current == "number" && type == "string"))
                     {
-                        // Mixed or conflicting values fall back to string.
                         result[pair.Key] = "string";
                     }
                 }
@@ -327,13 +321,10 @@ namespace PivotController.Indexing
                 }
                 catch (ReloadFailedKeepDataException)
                 {
-                    // Preload failed but KeepDataOnRefresh retained prior data (none at bootstrap).
                     _logger.LogWarning("Index '{Index}' preload failed; cached data retained.", definition.Index);
                 }
                 catch (Exception ex)
                 {
-                    // A bad index definition must not prevent the server from starting;
-                    // the index is registered with Failed status and can be fixed/deleted via API.
                     SetStatus(definition.Index, IndexStatus.Failed, 0, null, ex.Message);
                     _logger.LogError(ex, "Index '{Index}' preload failed at startup; status set to Failed.", definition.Index);
                 }
@@ -369,15 +360,11 @@ namespace PivotController.Indexing
             {
                 return cached;
             }
-            // Lazy load on cache miss (first request, KeepDataOnRefresh retention after a failed
-            // reload, or LRU eviction when CacheSizeLimit is small). LoadAsync succeeds unless
-            // the source is unreadable, in which case KeepDataOnRefresh already handled it.
             await LoadAsync(definition, manual: false).ConfigureAwait(false);
             if (_cache.TryGetValue(DataCacheKey(indexName), out cached))
             {
                 return cached;
             }
-            // CacheSizeLimit == 0 disables caching entirely: serve directly without caching.
             var data = await _providerFactory.Create(definition.SourceType)
                 .LoadAsync(definition, _store.DataFolder, CancellationToken.None).ConfigureAwait(false);
             return data;
@@ -413,12 +400,9 @@ namespace PivotController.Indexing
                 throw new ArgumentException("SourceType is immutable");
             }
 
-            // Apply patch fields (everything except SourceType and Index).
             existing.Name = string.IsNullOrWhiteSpace(patch.Name) ? existing.Name : patch.Name;
             existing.SourcePath = patch.SourcePath ?? existing.SourcePath;
             existing.CsvDelimiter = string.IsNullOrWhiteSpace(patch.CsvDelimiter) ? existing.CsvDelimiter : patch.CsvDelimiter;
-            // Separator enums: enums cannot be null, so a patch always carries a value;
-            // apply it unconditionally (defaults match the model defaults when omitted).
             existing.CsvDecimalSeparator = patch.CsvDecimalSeparator;
             existing.CsvThousandsSeparator = patch.CsvThousandsSeparator;
             existing.ConnectionStringName = patch.ConnectionStringName ?? existing.ConnectionStringName;
@@ -438,7 +422,6 @@ namespace PivotController.Indexing
             }
             if (patch.MappingEnabled.HasValue || patch.FieldMappings != null)
             {
-                // Explicit false disables mapping; omitted keeps current state.
                 existing.MappingEnabled = patch.MappingEnabled ?? (patch.FieldMappings != null);
                 if (existing.MappingEnabled == true)
                 {
@@ -487,7 +470,6 @@ namespace PivotController.Indexing
             }
             catch (Exception ex)
             {
-                // Spec 0.4.4.3: enable failure -> remain Disabled (no data to keep).
                 definition.Enabled = false;
                 Persist();
                 throw new InvalidOperationException($"Unable to load index '{indexName}': {ex.Message}", ex);
@@ -542,7 +524,6 @@ namespace PivotController.Indexing
                         var data = await provider.LoadAsync(definition, _store.DataFolder, CancellationToken.None).ConfigureAwait(false);
                         if (_dataStorage.CacheSizeLimit > 0 && _dataStorage.MaxCacheItemSizeBytes > 0 && EstimateSize(data) > _dataStorage.MaxCacheItemSizeBytes)
                         {
-                            // Per-item limit (spec §2.5.2): oversize data is not cached; loaded per request.
                             _cache.Remove(DataCacheKey(definition.Index));
                             _logger.LogWarning("Index '{Index}' data exceeds MaxCacheItemSizeBytes ({Bytes}); not cached.",
                                 definition.Index, _dataStorage.MaxCacheItemSizeBytes);

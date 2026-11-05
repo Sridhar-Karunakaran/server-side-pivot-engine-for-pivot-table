@@ -43,7 +43,6 @@ namespace PivotController.Indexing
                         }
                         catch (ReloadFailedKeepDataException)
                         {
-                            // Already logged by IndexManager; cached data continues to serve.
                         }
                         catch (Exception ex)
                         {

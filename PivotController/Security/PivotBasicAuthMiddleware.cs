@@ -33,8 +33,6 @@ namespace PivotController.Security
                 return;
             }
 
-            // CORS preflight requests are issued by the browser without credentials;
-            // they must pass through so the browser can evaluate the CORS policy.
             if (string.Equals(context.Request.Method, HttpMethods.Options, StringComparison.OrdinalIgnoreCase)
                 && context.Request.Headers.ContainsKey("Origin")
                 && context.Request.Headers.ContainsKey("Access-Control-Request-Method"))
