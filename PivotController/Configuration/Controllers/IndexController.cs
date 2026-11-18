@@ -152,16 +152,7 @@ namespace PivotController.Configuration.Controllers
             }
         }
 
-        private static DataSourceType ToDataSourceType(DatabaseType dbType) => dbType switch
-        {
-            DatabaseType.Sqlite => DataSourceType.Sqlite,
-            DatabaseType.PostgreSQL => DataSourceType.PostgreSQL,
-            DatabaseType.MSSQL => DataSourceType.SqlServer,
-            DatabaseType.MySql => DataSourceType.MySql,
-            DatabaseType.MariaDB => DataSourceType.MariaDb,
-            DatabaseType.Oracle => DataSourceType.Oracle,
-            _ => throw new NotSupportedException($"Database type '{dbType}' is not supported."),
-        };
+        private static DataSourceType ToDataSourceType(DatabaseType _) => DataSourceType.Database;
 
         [HttpPost]
         public async Task<ActionResult<IndexStatusResponse>> Create([FromBody] IndexDefinition definition)

@@ -31,7 +31,7 @@ namespace PivotController.Data.Providers
             _logger = logger;
         }
 
-        public DataSourceType SourceType => DataSourceType.Json; // never routed via SourceType; registered per DB source type
+        public DataSourceType SourceType => DataSourceType.Database;
 
         public async Task<List<ExpandoObject>> LoadAsync(IndexDefinition definition, string dataFolder, CancellationToken ct)
         {

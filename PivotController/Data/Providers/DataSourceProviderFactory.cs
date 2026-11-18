@@ -31,9 +31,7 @@ namespace PivotController.Data.Providers
             {
                 DataSourceType.Json => new JsonDataProvider(),
                 DataSourceType.Csv => new CsvDataProvider(),
-                DataSourceType.Sqlite or DataSourceType.PostgreSQL
-                    or DataSourceType.SqlServer or DataSourceType.MySql
-                    or DataSourceType.MariaDb or DataSourceType.Oracle => _databaseProvider,
+                DataSourceType.Database => _databaseProvider,
                 _ => throw new NotSupportedException($"SourceType '{sourceType}' is not supported."),
             };
         }

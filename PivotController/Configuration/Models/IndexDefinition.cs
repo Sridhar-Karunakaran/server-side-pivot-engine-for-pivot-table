@@ -1,6 +1,6 @@
 namespace PivotController.Configuration.Models
 {
-    public enum DataSourceType { Json, Csv, SqlServer, PostgreSQL, MySql, Oracle, MariaDb, Sqlite }
+    public enum DataSourceType { Json, Csv, Database }
     public enum DatabaseType { MySql, MariaDB, MSSQL, PostgreSQL, Oracle, Sqlite }
     public enum MappingDataType { Number, String, Date }
 
