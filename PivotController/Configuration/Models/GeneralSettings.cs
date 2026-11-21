@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Configuration;
+
 namespace PivotController.Configuration.Models
 {
     public enum LogLevelOption { Info, Warn, Error, Fatal }
@@ -7,9 +9,24 @@ namespace PivotController.Configuration.Models
     {
         public const string SectionName = "General";
 
-        public int Port { get; set; } = 9500;
+        public int Port { get; set; }
         public LogLevelOption MinimumLogLevel { get; set; } = LogLevelOption.Info;
         public string DataFolder { get; set; } = "DataSource";
+
+        public static GeneralSettings FromConfiguration(IConfigurationSection section, int? fallbackPort)
+        {
+            var settings = section.Get<GeneralSettings>() ?? new GeneralSettings();
+            var configuredPort = section.GetValue<int?>(nameof(Port));
+            if (configuredPort.HasValue)
+            {
+                settings.Port = configuredPort.Value;
+            }
+            else if (fallbackPort.HasValue)
+            {
+                settings.Port = fallbackPort.Value;
+            }
+            return settings;
+        }
 
         /// <summary>Effective minimum level mapped onto ASP.NET log levels.</summary>
         public static Microsoft.Extensions.Logging.LogLevel ToAspNetLogLevel(LogLevelOption option) => option switch

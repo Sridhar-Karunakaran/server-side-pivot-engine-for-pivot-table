@@ -22,7 +22,16 @@ builder.Services.AddSingleton<IDataSourceProviderFactory, DataSourceProviderFact
 builder.Services.AddSingleton<IIndexManager, IndexManager>();
 builder.Services.AddHostedService<IndexReloadWorker>();
 
-var generalSettings = builder.Configuration.GetSection(GeneralSettings.SectionName).Get<GeneralSettings>() ?? new GeneralSettings();
+var generalSection = builder.Configuration.GetSection(GeneralSettings.SectionName);
+var configuredGeneralPort = generalSection.GetValue<int?>(nameof(GeneralSettings.Port));
+var launchSettingsPort = configuredGeneralPort.HasValue
+    ? null
+    : LaunchSettingsPortResolver.ResolveApplicationUrl(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"))
+        ?? LaunchSettingsPortResolver.Resolve(
+            System.IO.Path.Combine(builder.Environment.ContentRootPath, "Properties", "launchSettings.json"),
+            Environment.GetEnvironmentVariable("DOTNET_LAUNCH_PROFILE"));
+var generalSettings = GeneralSettings.FromConfiguration(generalSection, launchSettingsPort);
+var generalPortConfiguredInAppSettings = configuredGeneralPort.HasValue;
 var generalValidation = generalSettings.Validate();
 if (generalValidation.Count > 0)
 {
@@ -162,7 +171,7 @@ builder.Services.AddSingleton(reportSharingSettings);
 builder.Services.AddSingleton<ReportSharingService>();
 builder.Services.AddHostedService<ReportSweepWorker>();
 
-if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
+if (generalPortConfiguredInAppSettings || Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
 {
     System.Security.Cryptography.X509Certificates.X509Certificate2? httpsCertificate = null;
     if (httpsSettings.Enabled)
@@ -200,7 +209,15 @@ if (Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
     }
     else
     {
-        builder.WebHost.UseUrls($"http://0.0.0.0:{generalSettings.Port}");
+        if (generalPortConfiguredInAppSettings)
+        {
+            builder.WebHost.ConfigureKestrel(options =>
+                options.Listen(System.Net.IPAddress.Any, generalSettings.Port));
+        }
+        else
+        {
+            builder.WebHost.UseUrls($"http://0.0.0.0:{generalSettings.Port}");
+        }
     }
 }
 
